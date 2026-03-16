@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "quant-signal-workstation"
+version = "0.1.0"
+description = "Production-minded quant signal workstation and forecasting pipeline."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+authors = [
+  { name = "Christian Cortez" },
+]
+dependencies = [
+  "alembic>=1.16,<2",
+  "fastapi>=0.135,<1",
+  "joblib>=1.5,<2",
+  "numpy>=2.3,<3",
+  "pandas>=2.3,<3",
+  "psycopg[binary]>=3.2,<4",
+  "pyarrow>=22,<24",
+  "pydantic-settings>=2.11,<3",
+  "scikit-learn>=1.7,<2",
+  "shap>=0.49,<1",
+  "sqlalchemy>=2.0,<3",
+  "uvicorn[standard]>=0.38,<1",
+  "yfinance>=0.2.66,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28,<1",
+  "mypy>=1.18,<2",
+  "pytest>=8.4,<9",
+  "ruff>=0.14,<1",
+]
+
+[project.scripts]
+quant-signal-api = "quant_signal.api.app:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/quant_signal"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E",
+  "F",
+  "I",
+  "B",
+  "UP",
+  "N",
+]
+
+[tool.mypy]
+python_version = "3.14"
+pretty = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unused_configs = true
+strict = true
+packages = ["quant_signal"]
+explicit_package_bases = true
+mypy_path = ["src"]
+ignore_missing_imports = true
