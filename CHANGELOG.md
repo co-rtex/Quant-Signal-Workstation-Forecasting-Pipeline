@@ -12,6 +12,8 @@
 - Readiness checks backed by real database connectivity
 - Provider abstraction, ingestion service, and persisted normalized daily bar workflow
 - Feature engineering, forward-return label generation, temporal split utilities, and dataset artifact materialization
+- Baseline model training, Platt-style calibration, evaluation metrics, and champion selection rules
+- Persisted model registry records, signal snapshots, and read-only FastAPI endpoints for signals and model metadata
 
 ### Validated
 
@@ -21,6 +23,7 @@
 - `make db-up`
 - `make migrate`
 - synthetic ingestion and dataset materialization integration test
+- training-to-API integration test covering model persistence and signal serving
 
 ### Next
 

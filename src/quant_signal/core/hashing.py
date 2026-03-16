@@ -27,5 +27,10 @@ def sha256_file(path: Path) -> str:
 def sha256_json(payload: Any) -> str:
     """Return a stable SHA-256 digest for JSON-serializable content."""
 
-    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    serialized = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
     return sha256_bytes(serialized)

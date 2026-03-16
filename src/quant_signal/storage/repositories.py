@@ -7,10 +7,18 @@ from dataclasses import dataclass
 from datetime import date
 
 import pandas as pd
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from quant_signal.storage.models import DailyBar, DatasetVersion, IngestionRun, Symbol
+from quant_signal.storage.models import (
+    DailyBar,
+    DatasetVersion,
+    IngestionRun,
+    ModelEvaluation,
+    ModelVersion,
+    SignalSnapshot,
+    Symbol,
+)
 
 
 @dataclass(frozen=True)
@@ -41,6 +49,50 @@ class DatasetArtifactRecord:
     artifact_hash: str
     feature_columns: list[str]
     label_columns: list[str]
+    metadata_json: dict[str, object]
+
+
+@dataclass(frozen=True)
+class ModelArtifactRecord:
+    """Model artifact metadata to persist."""
+
+    dataset_version_id: str
+    horizon_days: int
+    model_family: str
+    target_column: str
+    artifact_path: str
+    artifact_hash: str
+    feature_columns: list[str]
+    champion_rank: int | None
+    train_start_date: date | None
+    train_end_date: date | None
+    validation_start_date: date | None
+    validation_end_date: date | None
+    test_start_date: date | None
+    test_end_date: date | None
+    metadata_json: dict[str, object]
+
+
+@dataclass(frozen=True)
+class EvaluationRecord:
+    """Model evaluation payload to persist."""
+
+    model_version_id: str
+    split_name: str
+    metrics_json: dict[str, object]
+    calibration_bins: list[dict[str, float]]
+
+
+@dataclass(frozen=True)
+class SignalSnapshotRecord:
+    """Ranked signal snapshot payload."""
+
+    model_version_id: str
+    horizon_days: int
+    as_of_date: date
+    symbol: str
+    score: float
+    rank: int
     metadata_json: dict[str, object]
 
 
@@ -242,3 +294,122 @@ class StorageRepository:
         if dataset_version is None:
             raise ValueError(f"Unknown dataset version: {dataset_version_id}")
         return dataset_version
+
+    def create_model_version(self, record: ModelArtifactRecord) -> ModelVersion:
+        """Persist model artifact metadata."""
+
+        model_version = ModelVersion(
+            dataset_version_id=record.dataset_version_id,
+            horizon_days=record.horizon_days,
+            model_family=record.model_family,
+            target_column=record.target_column,
+            artifact_path=record.artifact_path,
+            artifact_hash=record.artifact_hash,
+            feature_columns=record.feature_columns,
+            champion_rank=record.champion_rank,
+            train_start_date=record.train_start_date,
+            train_end_date=record.train_end_date,
+            validation_start_date=record.validation_start_date,
+            validation_end_date=record.validation_end_date,
+            test_start_date=record.test_start_date,
+            test_end_date=record.test_end_date,
+            metadata_json=record.metadata_json,
+        )
+        self.session.add(model_version)
+        self.session.flush()
+        return model_version
+
+    def create_model_evaluation(self, record: EvaluationRecord) -> ModelEvaluation:
+        """Persist evaluation metrics for a model split."""
+
+        evaluation = ModelEvaluation(
+            model_version_id=record.model_version_id,
+            split_name=record.split_name,
+            roc_auc=record.metrics_json.get("roc_auc"),
+            pr_auc=record.metrics_json.get("pr_auc"),
+            brier_score=record.metrics_json.get("brier_score"),
+            calibration_error=record.metrics_json.get("calibration_error"),
+            metrics_json=record.metrics_json,
+            calibration_bins=record.calibration_bins,
+        )
+        self.session.add(evaluation)
+        self.session.flush()
+        return evaluation
+
+    def replace_signal_snapshots(
+        self,
+        model_version_id: str,
+        records: Sequence[SignalSnapshotRecord],
+    ) -> None:
+        """Replace persisted signal snapshots for a model version."""
+
+        self.session.execute(
+            delete(SignalSnapshot).where(SignalSnapshot.model_version_id == model_version_id)
+        )
+        for record in records:
+            self.session.add(
+                SignalSnapshot(
+                    model_version_id=record.model_version_id,
+                    horizon_days=record.horizon_days,
+                    as_of_date=record.as_of_date,
+                    symbol=record.symbol,
+                    score=record.score,
+                    rank=record.rank,
+                    metadata_json=record.metadata_json,
+                )
+            )
+        self.session.flush()
+
+    def get_model_version(self, model_version_id: str) -> ModelVersion:
+        """Return a model version by id."""
+
+        model_version = self.session.get(ModelVersion, model_version_id)
+        if model_version is None:
+            raise ValueError(f"Unknown model version: {model_version_id}")
+        return model_version
+
+    def list_model_evaluations(self, model_version_id: str) -> list[ModelEvaluation]:
+        """Return evaluations for a model version ordered by split name."""
+
+        return list(
+            self.session.execute(
+                select(ModelEvaluation)
+                .where(ModelEvaluation.model_version_id == model_version_id)
+                .order_by(ModelEvaluation.split_name)
+            ).scalars()
+        )
+
+    def list_champion_models(self, horizon_days: int | None = None) -> list[ModelVersion]:
+        """Return champion model versions ordered by newest first."""
+
+        statement = select(ModelVersion).where(ModelVersion.champion_rank == 1)
+        if horizon_days is not None:
+            statement = statement.where(ModelVersion.horizon_days == horizon_days)
+        statement = statement.order_by(ModelVersion.created_at.desc())
+        return list(self.session.execute(statement).scalars())
+
+    def get_ranked_signal_snapshots(
+        self,
+        as_of_date: date,
+        horizon_days: int,
+        limit: int,
+        model_version_id: str | None = None,
+    ) -> list[SignalSnapshot]:
+        """Return ranked persisted signal snapshots."""
+
+        target_model_version_id = model_version_id
+        if target_model_version_id is None:
+            champion_models = self.list_champion_models(horizon_days=horizon_days)
+            if not champion_models:
+                return []
+            target_model_version_id = champion_models[0].id
+
+        statement = (
+            select(SignalSnapshot)
+            .where(SignalSnapshot.model_version_id == target_model_version_id)
+            .where(SignalSnapshot.horizon_days == horizon_days)
+            .where(SignalSnapshot.as_of_date == as_of_date)
+            .order_by(SignalSnapshot.rank)
+            .limit(limit)
+        )
+        return list(self.session.execute(statement).scalars())

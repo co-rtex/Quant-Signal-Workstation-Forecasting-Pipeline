@@ -12,9 +12,9 @@ Deliver a production-minded MVP for daily US equities forecasting with reproduci
 | 2. Core config and storage | Complete | SQLAlchemy models, readiness checks, Alembic, registry schema |
 | 3. Ingestion pipeline | Complete | Provider abstraction, yfinance adapter, ingestion runs, bar persistence |
 | 4. Feature datasets | Complete | Feature engineering, labels, versioned Parquet datasets, split utilities |
-| 5. Training and evaluation | In progress | Candidate models, calibration, champion selection, registry writes |
-| 6. Backtesting and explainability | Pending | Walk-forward backtests, regime slices, SHAP artifacts |
-| 7. FastAPI serving | Pending | Ranked signals, model metadata, readiness checks |
+| 5. Training and evaluation | Complete | Candidate models, calibration, champion selection, registry writes |
+| 6. Backtesting and explainability | In progress | Walk-forward backtests, regime slices, SHAP artifacts |
+| 7. FastAPI serving | Complete | Ranked signals, model metadata, readiness checks |
 
 ## Sequencing Rules
 
@@ -25,11 +25,11 @@ Deliver a production-minded MVP for daily US equities forecasting with reproduci
 
 ## Current Task
 
-Implement training, calibration, evaluation reporting, and model registry persistence.
+Implement walk-forward backtesting and SHAP explainability tied to persisted model versions.
 
 ## Next Task
 
-Add walk-forward backtesting, SHAP explainability, and read-only signal serving.
+Finalize docs, runtime validation, and GitHub push preparation.
 
 ## Key Risks
 
