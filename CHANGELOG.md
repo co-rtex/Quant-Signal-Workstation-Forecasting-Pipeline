@@ -8,12 +8,16 @@
 - Project packaging, developer workflow, CI scaffold, and environment configuration
 - Architecture notes, execution plan, and delivery log
 - FastAPI health endpoints and basic runtime configuration
+- SQLAlchemy models, database helpers, Alembic environment, and the initial persistence schema
+- Readiness checks backed by real database connectivity
 
 ### Validated
 
 - `make lint`
 - `make typecheck`
 - `make test`
+- `make db-up`
+- `make migrate`
 
 ### Next
 

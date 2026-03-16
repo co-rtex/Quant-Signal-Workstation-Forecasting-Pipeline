@@ -25,6 +25,7 @@
 - PostgreSQL stores normalized raw bars, ingestion runs, dataset manifests, model registry records, evaluations, backtests, explainability run metadata, and signal snapshots.
 - Versioned Parquet artifacts under `artifacts/` store model-ready feature datasets and serialized model bundles.
 - Hashes and metadata in PostgreSQL point to the exact artifact path used by downstream stages.
+- The v1 schema uses logically grouped tables in the default database schema to keep local testing portable; service boundaries do not depend on physical schema names, so a later Postgres schema split remains reversible.
 
 ## Data Flow
 

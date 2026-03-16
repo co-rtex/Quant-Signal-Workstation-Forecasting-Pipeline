@@ -1,14 +1,18 @@
 """API smoke tests."""
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
-from quant_signal.api.app import app
+from quant_signal.api.app import create_app
 
 
-def test_health_endpoints() -> None:
+def test_health_endpoints(tmp_path: Path, monkeypatch: object) -> None:
     """Health endpoints should respond successfully."""
 
-    client = TestClient(app)
+    database_path = tmp_path / "health.sqlite3"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+pysqlite:///{database_path}")
+    client = TestClient(create_app())
 
     live = client.get("/health/live")
     ready = client.get("/health/ready")
