@@ -10,6 +10,8 @@
 - FastAPI health endpoints and basic runtime configuration
 - SQLAlchemy models, database helpers, Alembic environment, and the initial persistence schema
 - Readiness checks backed by real database connectivity
+- Provider abstraction, ingestion service, and persisted normalized daily bar workflow
+- Feature engineering, forward-return label generation, temporal split utilities, and dataset artifact materialization
 
 ### Validated
 
@@ -18,6 +20,7 @@
 - `make test`
 - `make db-up`
 - `make migrate`
+- synthetic ingestion and dataset materialization integration test
 
 ### Next
 

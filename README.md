@@ -71,4 +71,4 @@ Production-minded forecasting platform for daily US equities. The system ingests
 
 ## Current Status
 
-The repository is bootstrapped with tooling, docs, and a clean package layout. Subsequent commits implement storage, ingestion, feature generation, training, backtesting, explainability, and signal serving.
+The repository now includes the validated platform foundation, database schema, ingestion contract, persisted OHLCV workflow, feature engineering pipeline, forward-return targets, and versioned dataset artifacts. The next implementation slices are model training, evaluation, backtesting, SHAP explainability, and the read-only signal-serving API.
