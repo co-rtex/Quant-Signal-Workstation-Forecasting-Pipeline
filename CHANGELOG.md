@@ -14,6 +14,8 @@
 - Feature engineering, forward-return label generation, temporal split utilities, and dataset artifact materialization
 - Baseline model training, Platt-style calibration, evaluation metrics, and champion selection rules
 - Persisted model registry records, signal snapshots, and read-only FastAPI endpoints for signals and model metadata
+- Walk-forward backtesting with benchmark regime summaries and persisted backtest artifacts
+- SHAP explainability workflow with persisted global and local explanation artifacts tied to model versions
 
 ### Validated
 
@@ -24,9 +26,9 @@
 - `make migrate`
 - synthetic ingestion and dataset materialization integration test
 - training-to-API integration test covering model persistence and signal serving
+- backtesting and explainability integration test covering persisted artifacts
 
 ### Next
 
-- Database schema, migrations, and persistence contracts
-- Market data ingestion workflow
-- Feature datasets, model training, and signal serving
+- GitHub push of the validated MVP implementation
+- Next iteration on backtest realism, richer model selection, and stronger data-provider hardening

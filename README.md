@@ -71,4 +71,13 @@ Production-minded forecasting platform for daily US equities. The system ingests
 
 ## Current Status
 
-The repository now includes the validated platform foundation, database schema, ingestion contract, persisted OHLCV workflow, feature engineering pipeline, versioned dataset artifacts, baseline model training, probability calibration, persisted signal snapshots, and read-only FastAPI endpoints for health, signals, and model metadata. The remaining major implementation slice is walk-forward backtesting plus SHAP explainability tied to registered model versions.
+The repository now includes the validated platform foundation, database schema, ingestion contract, persisted OHLCV workflow, feature engineering pipeline, versioned dataset artifacts, calibrated model training, regime-aware walk-forward backtesting, SHAP explainability artifacts, persisted signal snapshots, and read-only FastAPI endpoints for health, signals, and model metadata.
+
+## Implemented MVP Workflow
+
+1. Ingest benchmark and universe OHLCV data through a provider abstraction.
+2. Materialize reproducible feature datasets as versioned Parquet artifacts with registry metadata in PostgreSQL.
+3. Train baseline `logistic_regression` and `hist_gradient_boosting` candidates per horizon, calibrate probabilities, and rank the champion with `PR-AUC`, `Brier score`, and `ROC-AUC`.
+4. Persist ranked daily signal snapshots for champion models so the API stays read-only.
+5. Run monthly walk-forward backtests with simple benchmark regime slicing.
+6. Generate global and local SHAP summaries tied to a concrete model version and evaluation window.

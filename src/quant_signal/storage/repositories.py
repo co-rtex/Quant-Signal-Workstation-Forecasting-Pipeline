@@ -11,11 +11,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from quant_signal.storage.models import (
+    BacktestRun,
     DailyBar,
     DatasetVersion,
     IngestionRun,
     ModelEvaluation,
     ModelVersion,
+    ShapRun,
     SignalSnapshot,
     Symbol,
 )
@@ -94,6 +96,33 @@ class SignalSnapshotRecord:
     score: float
     rank: int
     metadata_json: dict[str, object]
+
+
+@dataclass(frozen=True)
+class BacktestRunRecord:
+    """Backtest result payload."""
+
+    model_version_id: str
+    horizon_days: int
+    top_n: int
+    min_training_days: int
+    status: str
+    artifact_path: str
+    artifact_hash: str
+    summary_json: dict[str, object]
+    regime_summary_json: dict[str, object]
+    metadata_json: dict[str, object]
+
+
+@dataclass(frozen=True)
+class ShapRunRecord:
+    """SHAP run payload."""
+
+    model_version_id: str
+    sample_size: int
+    artifact_path: str
+    artifact_hash: str
+    summary_json: dict[str, object]
 
 
 class StorageRepository:
@@ -413,3 +442,36 @@ class StorageRepository:
             .limit(limit)
         )
         return list(self.session.execute(statement).scalars())
+
+    def create_backtest_run(self, record: BacktestRunRecord) -> BacktestRun:
+        """Persist a completed backtest run."""
+
+        backtest_run = BacktestRun(
+            model_version_id=record.model_version_id,
+            horizon_days=record.horizon_days,
+            top_n=record.top_n,
+            min_training_days=record.min_training_days,
+            status=record.status,
+            artifact_path=record.artifact_path,
+            artifact_hash=record.artifact_hash,
+            summary_json=record.summary_json,
+            regime_summary_json=record.regime_summary_json,
+            metadata_json=record.metadata_json,
+        )
+        self.session.add(backtest_run)
+        self.session.flush()
+        return backtest_run
+
+    def create_shap_run(self, record: ShapRunRecord) -> ShapRun:
+        """Persist a SHAP explainability run."""
+
+        shap_run = ShapRun(
+            model_version_id=record.model_version_id,
+            sample_size=record.sample_size,
+            artifact_path=record.artifact_path,
+            artifact_hash=record.artifact_hash,
+            summary_json=record.summary_json,
+        )
+        self.session.add(shap_run)
+        self.session.flush()
+        return shap_run

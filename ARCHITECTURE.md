@@ -36,9 +36,19 @@
 5. Explainability loads model bundles and evaluation slices, produces SHAP summaries, and stores explainability artifacts.
 6. FastAPI serves health, model metadata, and ranked historical signal snapshots from persisted records.
 
+## Contract Points
+
+- `MarketDataProvider.fetch_daily_bars(symbols, start_date, end_date)` returns normalized daily bars with no persistence side effects.
+- `FeaturePipeline.build_dataset(as_of_date, symbols, feature_set_version)` owns feature and label materialization plus dataset manifest creation.
+- `TrainingService.train(dataset_version_id, horizons)` owns candidate fitting, probability calibration, evaluation persistence, champion selection, and signal snapshot refresh.
+- `BacktestService.run(model_version_id, top_n)` retrains the registered model family in a monthly walk-forward loop and persists summary artifacts.
+- `ExplainabilityService.generate(model_version_id, sample_size, top_signals)` binds SHAP outputs to a specific registered model artifact and evaluation window.
+- `SignalService.get_ranked_signals(as_of_date, horizon, limit)` is the read-side contract used by the API layer.
+
 ## Initial Tradeoffs
 
 - Use sync SQLAlchemy sessions for simplicity and testability.
 - Keep training request handling out of the API; API remains read-only.
 - Use a free adapter first, but hide it behind a provider interface to avoid leaking vendor assumptions.
 - Store wide feature matrices in Parquet artifacts rather than a mutable wide SQL table.
+- Keep backtesting assumptions explicit and simple in MVP: monthly retraining, equal-weight long-only sleeves, and benchmark-derived regime labels without transaction costs.

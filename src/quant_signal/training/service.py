@@ -243,6 +243,62 @@ class TrainingService:
 
         return results
 
+    def _build_split_for_backtest(
+        self,
+        history_frame: pd.DataFrame,
+        embargo_days: int,
+    ) -> TemporalSplit:
+        """Build a temporal split for a walk-forward retraining window."""
+
+        return build_temporal_split(
+            history_frame,
+            embargo_days=embargo_days,
+            minimum_train_dates=self.settings.min_training_days,
+        )
+
+    def _fit_model_family(
+        self,
+        dataset_frame: pd.DataFrame,
+        dataset_version_id: str,
+        feature_columns: list[str],
+        target_column: str,
+        horizon: int,
+        model_family: str,
+        split: TemporalSplit,
+    ) -> ModelArtifactBundle:
+        """Fit a single calibrated model family and return its bundle."""
+
+        train_frame = dataset_frame[split.mask(dataset_frame, "train")].copy()
+        validation_frame = dataset_frame[split.mask(dataset_frame, "validation")].copy()
+        x_train = train_frame[feature_columns]
+        x_validation = validation_frame[feature_columns]
+        y_train = train_frame[target_column].astype(int).to_numpy()
+        y_validation = validation_frame[target_column].astype(int).to_numpy()
+
+        self._ensure_class_diversity(y_train, split_name="train", horizon=horizon)
+        self._ensure_class_diversity(y_validation, split_name="validation", horizon=horizon)
+
+        estimator = self._candidate_estimators()[model_family]
+        fitted_estimator = estimator.fit(x_train, y_train)
+        validation_raw = fitted_estimator.predict_proba(x_validation)[:, 1]
+        calibrator = ProbabilityCalibrator.fit(validation_raw, y_validation)
+
+        return ModelArtifactBundle(
+            model_family=model_family,
+            feature_columns=feature_columns,
+            target_column=target_column,
+            horizon_days=horizon,
+            dataset_version_id=dataset_version_id,
+            estimator=fitted_estimator,
+            calibrator=calibrator,
+            split_summary=self._build_split_summary(
+                train_frame,
+                validation_frame,
+                validation_frame,
+            ),
+            metadata_json={"trained_for": "backtest"},
+        )
+
     def _build_signal_snapshots(
         self,
         model_version_id: str,
