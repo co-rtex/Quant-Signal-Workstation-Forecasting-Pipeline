@@ -32,7 +32,7 @@
 1. Ingestion fetches bars from a provider contract and stores normalized OHLCV rows with source and ingestion metadata.
 2. Feature generation queries persisted bars, joins benchmark context, creates leakage-safe features and labels, and writes a versioned dataset artifact.
 3. Training loads a dataset artifact, applies time-aware splits, fits candidate models, calibrates probabilities, evaluates reliability, and registers the champion model per horizon.
-4. Backtesting retrains monthly in walk-forward mode, scores daily candidates, simulates overlapping horizon sleeves, and records performance summaries plus regime slices.
+4. Backtesting retrains monthly in walk-forward mode, scores daily candidates, simulates overlapping horizon sleeves, applies configurable transaction costs and slippage, and records gross/net performance summaries plus regime slices.
 5. Explainability loads model bundles and evaluation slices, produces SHAP summaries, and stores explainability artifacts.
 6. FastAPI serves health, model metadata, and ranked historical signal snapshots from persisted records.
 
@@ -42,6 +42,7 @@
 - `FeaturePipeline.build_dataset(as_of_date, symbols, feature_set_version)` owns feature and label materialization plus dataset manifest creation.
 - `TrainingService.train(dataset_version_id, horizons)` owns candidate fitting, probability calibration, evaluation persistence, champion selection, and signal snapshot refresh.
 - `BacktestService.run(model_version_id, top_n)` retrains the registered model family in a monthly walk-forward loop and persists summary artifacts.
+- `BacktestService.run(model_version_id, top_n, execution_assumptions)` supports reproducible cost-aware reruns without changing the database schema.
 - `ExplainabilityService.generate(model_version_id, sample_size, top_signals)` binds SHAP outputs to a specific registered model artifact and evaluation window.
 - `SignalService.get_ranked_signals(as_of_date, horizon, limit)` is the read-side contract used by the API layer.
 
@@ -51,4 +52,4 @@
 - Keep training request handling out of the API; API remains read-only.
 - Use a free adapter first, but hide it behind a provider interface to avoid leaking vendor assumptions.
 - Store wide feature matrices in Parquet artifacts rather than a mutable wide SQL table.
-- Keep backtesting assumptions explicit and simple in MVP: monthly retraining, equal-weight long-only sleeves, and benchmark-derived regime labels without transaction costs.
+- Keep backtesting assumptions explicit and simple: monthly retraining, equal-weight long-only sleeves, benchmark-derived regime labels, and configurable per-side transaction cost/slippage assumptions persisted with each run.

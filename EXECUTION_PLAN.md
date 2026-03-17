@@ -2,7 +2,7 @@
 
 ## Objective
 
-Deliver a production-minded MVP for daily US equities forecasting with reproducible datasets, calibrated multi-horizon models, regime-aware backtests, SHAP explainability, and FastAPI signal serving.
+Extend the validated MVP with production-minded realism improvements, starting with cost-aware backtesting and then moving into richer analytics, provider hardening, and scheduled orchestration.
 
 ## Phase Status
 
@@ -15,6 +15,7 @@ Deliver a production-minded MVP for daily US equities forecasting with reproduci
 | 5. Training and evaluation | Complete | Candidate models, calibration, champion selection, registry writes |
 | 6. Backtesting and explainability | Complete | Monthly walk-forward backtests, regime slices, SHAP artifacts |
 | 7. FastAPI serving | Complete | Ranked signals, model metadata, readiness checks |
+| 8. Backtest realism improvements | In progress | Transaction costs, slippage, and auditable execution assumptions |
 
 ## Sequencing Rules
 
@@ -25,22 +26,22 @@ Deliver a production-minded MVP for daily US equities forecasting with reproduci
 
 ## Current Task
 
-Refresh documentation, run final validation, and prepare the clean Git history for push.
+Add configurable transaction costs and slippage to backtests without changing the persistence schema.
 
 ## Next Task
 
-Push the validated MVP scaffold and pipeline implementation to GitHub.
+Richer regime definitions and benchmark-relative portfolio analytics.
 
 ## Key Risks
 
 - Package compatibility on Python `3.14`
 - Reproducibility drift if artifact metadata and database metadata diverge
 - Leakage risk if time-aware dataset generation and validation are not enforced centrally
-- Backtest realism remains intentionally simple for MVP and should evolve before any live use
+- Backtest realism still excludes benchmark attribution, turnover analytics, and transaction timing nuance
 
 ## Deferred Decisions
 
 - Production market data provider beyond the free dev adapter
 - Deployment target beyond local and CI workflow
 - Hyperparameter search infrastructure beyond baseline champion selection
-- Transaction cost, slippage, and short-side portfolio modeling in backtests
+- Benchmark-relative analytics, turnover attribution, and multi-strategy comparisons

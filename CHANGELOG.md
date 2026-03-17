@@ -15,6 +15,7 @@
 - Baseline model training, Platt-style calibration, evaluation metrics, and champion selection rules
 - Persisted model registry records, signal snapshots, and read-only FastAPI endpoints for signals and model metadata
 - Walk-forward backtesting with benchmark regime summaries and persisted backtest artifacts
+- Configurable transaction cost and slippage modeling for walk-forward backtests
 - SHAP explainability workflow with persisted global and local explanation artifacts tied to model versions
 
 ### Validated
@@ -27,8 +28,9 @@
 - synthetic ingestion and dataset materialization integration test
 - training-to-API integration test covering model persistence and signal serving
 - backtesting and explainability integration test covering persisted artifacts
+- cost-aware backtesting unit and integration coverage
 
 ### Next
 
-- GitHub push of the validated MVP implementation
-- Next iteration on backtest realism, richer model selection, and stronger data-provider hardening
+- Richer regime definitions and benchmark-relative portfolio analytics
+- Provider hardening and scheduled pipeline entrypoints

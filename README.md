@@ -71,7 +71,7 @@ Production-minded forecasting platform for daily US equities. The system ingests
 
 ## Current Status
 
-The repository now includes the validated platform foundation, database schema, ingestion contract, persisted OHLCV workflow, feature engineering pipeline, versioned dataset artifacts, calibrated model training, regime-aware walk-forward backtesting, SHAP explainability artifacts, persisted signal snapshots, and read-only FastAPI endpoints for health, signals, and model metadata.
+The repository now includes the validated platform foundation, database schema, ingestion contract, persisted OHLCV workflow, feature engineering pipeline, versioned dataset artifacts, calibrated model training, cost-aware regime-aware walk-forward backtesting, SHAP explainability artifacts, persisted signal snapshots, and read-only FastAPI endpoints for health, signals, and model metadata.
 
 ## Implemented MVP Workflow
 
@@ -81,3 +81,10 @@ The repository now includes the validated platform foundation, database schema, 
 4. Persist ranked daily signal snapshots for champion models so the API stays read-only.
 5. Run monthly walk-forward backtests with simple benchmark regime slicing.
 6. Generate global and local SHAP summaries tied to a concrete model version and evaluation window.
+
+## Backtest Cost Assumptions
+
+- `BACKTEST_TRANSACTION_COST_BPS` defaults to `0.0`
+- `BACKTEST_SLIPPAGE_BPS` defaults to `0.0`
+- Backtest artifacts now record daily `gross_return`, `transaction_cost`, `slippage_cost`, `net_return`, and `active_sleeves`
+- `portfolio_return` remains available as an alias of `net_return` for backward compatibility

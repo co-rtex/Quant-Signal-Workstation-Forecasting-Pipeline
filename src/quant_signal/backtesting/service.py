@@ -9,9 +9,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from quant_signal.backtesting.execution import BacktestExecutionAssumptions
 from quant_signal.backtesting.regimes import label_regimes
 from quant_signal.core.config import Settings, get_settings
-from quant_signal.core.hashing import sha256_file
+from quant_signal.core.hashing import sha256_file, sha256_json
 from quant_signal.serving.service import rank_signal_frame
 from quant_signal.storage.db import session_scope
 from quant_signal.storage.models import BacktestRun
@@ -22,10 +23,27 @@ from quant_signal.training.service import TrainingService
 
 @dataclass
 class SleeveReturn:
-    """Daily return for one overlapping holding sleeve."""
+    """Daily gross and net return components for one holding sleeve."""
 
     active_date: pd.Timestamp
-    sleeve_return: float
+    gross_return: float
+    transaction_cost: float
+    slippage_cost: float
+
+    @property
+    def net_return(self) -> float:
+        """Return the post-cost sleeve return."""
+
+        return self.gross_return - self.transaction_cost - self.slippage_cost
+
+
+@dataclass(frozen=True)
+class BacktestSimulationResult:
+    """Cost-aware portfolio return series plus execution counts."""
+
+    portfolio_returns: pd.DataFrame
+    sleeves_opened: int
+    sleeves_closed: int
 
 
 class BacktestService:
@@ -43,7 +61,12 @@ class BacktestService:
             database_url=self.database_url,
         )
 
-    def run(self, model_version_id: str, top_n: int | None = None) -> BacktestRun:
+    def run(
+        self,
+        model_version_id: str,
+        top_n: int | None = None,
+        execution_assumptions: BacktestExecutionAssumptions | None = None,
+    ) -> BacktestRun:
         """Run and persist a walk-forward backtest."""
 
         with session_scope(self.database_url) as session:
@@ -55,6 +78,9 @@ class BacktestService:
         dataset_frame["date"] = pd.to_datetime(dataset_frame["date"])
         monthly_start_dates = self._monthly_start_dates(dataset_frame["date"])
         top_n_signals = top_n or self.settings.top_n_signals
+        resolved_assumptions = (
+            execution_assumptions or BacktestExecutionAssumptions.from_settings(self.settings)
+        )
 
         all_ranked_signals: list[pd.DataFrame] = []
         for month_start in monthly_start_dates:
@@ -93,20 +119,26 @@ class BacktestService:
             if all_ranked_signals
             else pd.DataFrame()
         )
-        portfolio_returns = self._simulate_portfolio_returns(
+        simulation_result = self._simulate_portfolio_returns(
             ranked_signals=ranked_signals,
             market_frame=dataset_frame,
             horizon_days=model_version.horizon_days,
             top_n=top_n_signals,
+            execution_assumptions=resolved_assumptions,
         )
-        regime_summary = self._build_regime_summary(dataset_frame, portfolio_returns)
-        summary_json = self._portfolio_summary(portfolio_returns)
+        regime_summary = self._build_regime_summary(
+            dataset_frame,
+            simulation_result.portfolio_returns,
+        )
+        summary_json = self._portfolio_summary(simulation_result.portfolio_returns)
 
-        artifact_path = (
-            Path(self.settings.artifact_root) / "backtests" / f"backtest_{model_version_id}.parquet"
+        artifact_path = self._build_artifact_path(
+            model_version_id=model_version_id,
+            top_n=top_n_signals,
+            execution_assumptions=resolved_assumptions,
         )
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
-        portfolio_returns.to_parquet(artifact_path, index=False)
+        simulation_result.portfolio_returns.to_parquet(artifact_path, index=False)
 
         with session_scope(self.database_url) as session:
             repository = StorageRepository(session)
@@ -121,7 +153,12 @@ class BacktestService:
                     artifact_hash=sha256_file(artifact_path),
                     summary_json=summary_json,
                     regime_summary_json=regime_summary,
-                    metadata_json={"signal_count": int(len(ranked_signals))},
+                    metadata_json={
+                        "signal_count": int(len(ranked_signals)),
+                        "sleeves_opened": simulation_result.sleeves_opened,
+                        "sleeves_closed": simulation_result.sleeves_closed,
+                        "execution_assumptions": resolved_assumptions.to_metadata_json(),
+                    },
                 )
             )
 
@@ -158,11 +195,26 @@ class BacktestService:
         market_frame: pd.DataFrame,
         horizon_days: int,
         top_n: int,
-    ) -> pd.DataFrame:
+        execution_assumptions: BacktestExecutionAssumptions,
+    ) -> BacktestSimulationResult:
         """Simulate overlapping long-only sleeves from ranked signals."""
 
         if ranked_signals.empty:
-            return pd.DataFrame(columns=["date", "portfolio_return"])
+            return BacktestSimulationResult(
+                portfolio_returns=pd.DataFrame(
+                    columns=[
+                        "date",
+                        "gross_return",
+                        "transaction_cost",
+                        "slippage_cost",
+                        "net_return",
+                        "active_sleeves",
+                        "portfolio_return",
+                    ]
+                ),
+                sleeves_opened=0,
+                sleeves_closed=0,
+            )
 
         price_frame = market_frame[["date", "symbol", "adjusted_close"]].copy()
         price_frame["date"] = pd.to_datetime(price_frame["date"])
@@ -174,6 +226,9 @@ class BacktestService:
             for symbol, group in price_frame.groupby("symbol", sort=False)
         }
         sleeve_returns_by_date: dict[pd.Timestamp, list[float]] = defaultdict(list)
+        sleeve_details_by_date: dict[pd.Timestamp, list[SleeveReturn]] = defaultdict(list)
+        sleeves_opened = 0
+        sleeves_closed = 0
 
         for signal_date, signal_rows in ranked_signals.groupby("date"):
             selected_symbols = signal_rows.sort_values("rank").head(top_n)["symbol"].tolist()
@@ -198,22 +253,85 @@ class BacktestService:
                         symbol_returns.append(float(daily_return))
 
                 if active_date is not None and symbol_returns:
+                    transaction_cost = (
+                        execution_assumptions.transaction_cost_rate
+                        if offset in {1, horizon_days}
+                        else 0.0
+                    )
+                    slippage_cost = (
+                        execution_assumptions.slippage_rate
+                        if offset in {1, horizon_days}
+                        else 0.0
+                    )
+                    if offset == 1:
+                        sleeves_opened += 1
+                    if offset == horizon_days:
+                        sleeves_closed += 1
                     sleeve_series.append(
                         SleeveReturn(
                             active_date=active_date,
-                            sleeve_return=float(np.mean(symbol_returns)),
+                            gross_return=float(np.mean(symbol_returns)),
+                            transaction_cost=transaction_cost,
+                            slippage_cost=slippage_cost,
                         )
                     )
 
             for sleeve_return in sleeve_series:
-                sleeve_returns_by_date[sleeve_return.active_date].append(sleeve_return.sleeve_return)
+                sleeve_returns_by_date[sleeve_return.active_date].append(sleeve_return.net_return)
+                sleeve_details_by_date[sleeve_return.active_date].append(sleeve_return)
 
         rows = [
-            {"date": active_date, "portfolio_return": float(np.mean(sleeve_returns))}
+            {
+                "date": active_date,
+                "gross_return": float(
+                    np.mean([sleeve_return.gross_return for sleeve_return in sleeve_details])
+                ),
+                "transaction_cost": float(
+                    np.mean(
+                        [
+                            sleeve_return.transaction_cost
+                            for sleeve_return in sleeve_details
+                        ]
+                    )
+                ),
+                "slippage_cost": float(
+                    np.mean([sleeve_return.slippage_cost for sleeve_return in sleeve_details])
+                ),
+                "net_return": float(np.mean(sleeve_returns)),
+                "active_sleeves": int(len(sleeve_returns)),
+                "portfolio_return": float(np.mean(sleeve_returns)),
+            }
             for active_date, sleeve_returns in sorted(sleeve_returns_by_date.items())
             if sleeve_returns
+            for sleeve_details in [sleeve_details_by_date[active_date]]
         ]
-        return pd.DataFrame(rows)
+        return BacktestSimulationResult(
+            portfolio_returns=pd.DataFrame(rows),
+            sleeves_opened=sleeves_opened,
+            sleeves_closed=sleeves_closed,
+        )
+
+    def _build_artifact_path(
+        self,
+        model_version_id: str,
+        top_n: int,
+        execution_assumptions: BacktestExecutionAssumptions,
+    ) -> Path:
+        """Build a reproducible artifact path for one backtest configuration."""
+
+        fingerprint = sha256_json(
+            {
+                "model_version_id": model_version_id,
+                "top_n": top_n,
+                "min_training_days": self.settings.min_training_days,
+                "execution_assumptions": execution_assumptions.to_metadata_json(),
+            }
+        )[:12]
+        return (
+            Path(self.settings.artifact_root)
+            / "backtests"
+            / f"backtest_{model_version_id}_{fingerprint}.parquet"
+        )
 
     def _portfolio_summary(self, portfolio_returns: pd.DataFrame) -> dict[str, object]:
         """Compute summary statistics for a portfolio return series."""
@@ -221,16 +339,23 @@ class BacktestService:
         if portfolio_returns.empty:
             return {
                 "cumulative_return": 0.0,
+                "gross_cumulative_return": 0.0,
                 "annualized_return": 0.0,
                 "annualized_volatility": 0.0,
                 "sharpe_ratio": None,
                 "max_drawdown": 0.0,
                 "hit_rate": 0.0,
+                "total_transaction_cost": 0.0,
+                "total_slippage_cost": 0.0,
+                "total_cost_drag": 0.0,
             }
 
+        gross_returns = portfolio_returns["gross_return"].astype(float)
         returns = portfolio_returns["portfolio_return"].astype(float)
+        gross_cumulative_curve = (1.0 + gross_returns).cumprod()
         cumulative_curve = (1.0 + returns).cumprod()
         cumulative_return = float(cumulative_curve.iloc[-1] - 1.0)
+        gross_cumulative_return = float(gross_cumulative_curve.iloc[-1] - 1.0)
         annualized_return = float(cumulative_curve.iloc[-1] ** (252 / len(returns)) - 1.0)
         annualized_volatility = float(returns.std(ddof=0) * np.sqrt(252))
         sharpe_ratio = (
@@ -239,13 +364,19 @@ class BacktestService:
             else None
         )
         drawdown = cumulative_curve / cumulative_curve.cummax() - 1.0
+        total_transaction_cost = float(portfolio_returns["transaction_cost"].sum())
+        total_slippage_cost = float(portfolio_returns["slippage_cost"].sum())
         return {
             "cumulative_return": cumulative_return,
+            "gross_cumulative_return": gross_cumulative_return,
             "annualized_return": annualized_return,
             "annualized_volatility": annualized_volatility,
             "sharpe_ratio": sharpe_ratio,
             "max_drawdown": float(drawdown.min()),
             "hit_rate": float((returns > 0).mean()),
+            "total_transaction_cost": total_transaction_cost,
+            "total_slippage_cost": total_slippage_cost,
+            "total_cost_drag": total_transaction_cost + total_slippage_cost,
         }
 
     def _build_regime_summary(

@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     default_horizons: list[int] = Field(default_factory=lambda: [1, 5, 20])
     top_n_signals: int = Field(default=10)
     min_training_days: int = Field(default=252)
+    backtest_transaction_cost_bps: float = Field(default=0.0)
+    backtest_slippage_bps: float = Field(default=0.0)
 
     @field_validator("universe_symbols", mode="before")
     @classmethod
@@ -51,6 +53,7 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [int(horizon.strip()) for horizon in value.split(",") if horizon.strip()]
         return value
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

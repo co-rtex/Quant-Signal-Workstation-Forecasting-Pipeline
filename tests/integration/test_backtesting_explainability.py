@@ -6,8 +6,10 @@ import math
 from datetime import date
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
+from quant_signal.backtesting.execution import BacktestExecutionAssumptions
 from quant_signal.backtesting.service import BacktestService
 from quant_signal.core.config import Settings
 from quant_signal.explainability.service import ExplainabilityService
@@ -102,14 +104,68 @@ def test_backtesting_and_explainability(tmp_path: Path) -> None:
         repository = StorageRepository(session)
         champion_model = repository.list_champion_models(horizon_days=5)[0]
 
-    backtest_run = BacktestService(settings=settings).run(champion_model.id, top_n=1)
+    backtest_service = BacktestService(settings=settings)
+    baseline_backtest_run = backtest_service.run(champion_model.id, top_n=1)
+    cost_backtest_run = backtest_service.run(
+        champion_model.id,
+        top_n=1,
+        execution_assumptions=BacktestExecutionAssumptions(
+            transaction_cost_bps=5.0,
+            slippage_bps=2.0,
+        ),
+    )
     shap_run = ExplainabilityService(settings=settings).generate(
         champion_model.id,
         sample_size=8,
         top_signals=3,
     )
 
-    assert Path(backtest_run.artifact_path).exists()
+    baseline_artifact = pd.read_parquet(baseline_backtest_run.artifact_path)
+    cost_artifact = pd.read_parquet(cost_backtest_run.artifact_path)
+
+    assert Path(baseline_backtest_run.artifact_path).exists()
+    assert Path(cost_backtest_run.artifact_path).exists()
     assert Path(shap_run.artifact_path).exists()
-    assert "cumulative_return" in backtest_run.summary_json
+    assert baseline_backtest_run.artifact_path != cost_backtest_run.artifact_path
+    assert "cumulative_return" in baseline_backtest_run.summary_json
     assert shap_run.summary_json["global_importance"]
+    assert list(cost_artifact.columns) == [
+        "date",
+        "gross_return",
+        "transaction_cost",
+        "slippage_cost",
+        "net_return",
+        "active_sleeves",
+        "portfolio_return",
+    ]
+    assert np.allclose(
+        baseline_artifact["gross_return"],
+        baseline_artifact["net_return"],
+    )
+    assert np.allclose(
+        baseline_artifact["net_return"],
+        baseline_artifact["portfolio_return"],
+    )
+    assert (cost_artifact["transaction_cost"] > 0).any()
+    assert (cost_artifact["slippage_cost"] > 0).any()
+    assert np.all(cost_artifact["gross_return"] >= cost_artifact["net_return"])
+    assert np.allclose(
+        cost_artifact["net_return"],
+        cost_artifact["portfolio_return"],
+    )
+    assert (
+        cost_backtest_run.summary_json["gross_cumulative_return"]
+        >= cost_backtest_run.summary_json["cumulative_return"]
+    )
+    assert cost_backtest_run.summary_json["total_transaction_cost"] > 0
+    assert cost_backtest_run.summary_json["total_slippage_cost"] > 0
+    assert cost_backtest_run.summary_json["total_cost_drag"] > 0
+    assert cost_backtest_run.metadata_json["execution_assumptions"] == {
+        "transaction_cost_bps": 5.0,
+        "slippage_bps": 2.0,
+        "transaction_cost_rate": 0.0005,
+        "slippage_rate": 0.0002,
+        "total_cost_rate_per_side": 0.0007,
+    }
+    assert cost_backtest_run.metadata_json["sleeves_opened"] > 0
+    assert cost_backtest_run.metadata_json["sleeves_closed"] > 0
