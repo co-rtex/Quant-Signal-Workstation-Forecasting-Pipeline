@@ -17,7 +17,8 @@ Extend the validated MVP with production-minded realism improvements, starting w
 | 7. FastAPI serving | Complete | Ranked signals, model metadata, readiness checks |
 | 8. Backtest cost realism | Complete | Transaction costs, slippage, and auditable execution assumptions |
 | 9. Benchmark-relative analytics | Complete | Active-return metrics, richer regime context, benchmark-relative drawdowns |
-| 10. Attribution-ready analytics | Pending | Turnover analytics, benchmark attribution, and richer portfolio diagnostics |
+| 10. Turnover analytics foundation | Complete | Detail artifact, holdings transitions, turnover-aware reporting |
+| 11. Attribution-ready analytics | Pending | Active return decomposition and richer implementation diagnostics |
 
 ## Sequencing Rules
 
@@ -28,22 +29,22 @@ Extend the validated MVP with production-minded realism improvements, starting w
 
 ## Current Task
 
-Plan the next post-analytics backtest slice: turnover metrics and attribution-ready reporting.
+Plan the next post-turnover slice: active return decomposition and attribution-ready reporting.
 
 ## Next Task
 
-Turnover analytics and benchmark attribution hooks.
+Active return decomposition and benchmark attribution hooks.
 
 ## Key Risks
 
 - Package compatibility on Python `3.14`
 - Reproducibility drift if artifact metadata and database metadata diverge
 - Leakage risk if time-aware dataset generation and validation are not enforced centrally
-- Backtest analytics still exclude turnover attribution, transaction timing nuance, and multi-strategy comparisons
+- Backtest analytics still exclude explicit active-return attribution, transaction timing nuance, and multi-strategy comparisons
 
 ## Deferred Decisions
 
 - Production market data provider beyond the free dev adapter
 - Deployment target beyond local and CI workflow
 - Hyperparameter search infrastructure beyond baseline champion selection
-- Turnover attribution, benchmark attribution, and multi-strategy comparisons
+- Benchmark attribution, provider hardening, and multi-strategy comparisons

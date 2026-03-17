@@ -6,13 +6,23 @@ import math
 
 import pandas as pd
 
-BACKTEST_ANALYTICS_VERSION = "v2"
+from quant_signal.backtesting.execution import BacktestExecutionAssumptions
+
+BACKTEST_ANALYTICS_VERSION = "v3"
+BACKTEST_DETAIL_ARTIFACT_VERSION = "v1"
 REGIME_DIMENSIONS = (
     "trend_flag",
     "volatility_flag",
     "momentum_flag",
     "drawdown_bucket",
 )
+BACKTEST_TURNOVER_COLUMNS = [
+    "entries_count",
+    "exits_count",
+    "holdings_count",
+    "turnover",
+    "turnover_cost",
+]
 BACKTEST_ARTIFACT_COLUMNS = [
     "date",
     "gross_return",
@@ -20,6 +30,7 @@ BACKTEST_ARTIFACT_COLUMNS = [
     "slippage_cost",
     "net_return",
     "active_sleeves",
+    *BACKTEST_TURNOVER_COLUMNS,
     "portfolio_return",
     "benchmark_return",
     "gross_active_return",
@@ -38,6 +49,20 @@ BACKTEST_ARTIFACT_COLUMNS = [
     "volatility_20d",
     "momentum_20d",
     "drawdown_63d",
+]
+BACKTEST_DETAIL_ARTIFACT_COLUMNS = [
+    "signal_date",
+    "active_date",
+    "symbol",
+    "rank",
+    "weight",
+    "is_entry",
+    "is_exit",
+    "is_held",
+    "gross_return_contribution",
+    "transaction_cost_contribution",
+    "slippage_cost_contribution",
+    "net_return_contribution",
 ]
 
 
@@ -72,6 +97,18 @@ def attach_benchmark_relative_analytics(
     if portfolio_returns.empty:
         return pd.DataFrame(columns=BACKTEST_ARTIFACT_COLUMNS)
 
+    portfolio_frame = portfolio_returns.copy()
+    default_values: dict[str, int | float] = {
+        "entries_count": 0,
+        "exits_count": 0,
+        "holdings_count": 0,
+        "turnover": 0.0,
+        "turnover_cost": 0.0,
+    }
+    for column, default in default_values.items():
+        if column not in portfolio_frame.columns:
+            portfolio_frame[column] = default
+
     benchmark_columns = [
         "date",
         "benchmark_return",
@@ -84,7 +121,7 @@ def attach_benchmark_relative_analytics(
         "momentum_20d",
         "drawdown_63d",
     ]
-    analytics_frame = portfolio_returns.merge(
+    analytics_frame = portfolio_frame.merge(
         benchmark_analytics[benchmark_columns],
         on="date",
         how="left",
@@ -119,6 +156,54 @@ def attach_benchmark_relative_analytics(
     analytics_frame["benchmark_drawdown"] = compute_drawdown(benchmark_equity)
     analytics_frame["relative_drawdown"] = compute_drawdown(relative_equity)
     return analytics_frame[BACKTEST_ARTIFACT_COLUMNS].copy()
+
+
+def build_turnover_daily_metrics(
+    detail_frame: pd.DataFrame,
+    execution_assumptions: BacktestExecutionAssumptions,
+) -> pd.DataFrame:
+    """Build daily turnover metrics from composition-level detail rows."""
+
+    if detail_frame.empty:
+        return pd.DataFrame(columns=["date", *BACKTEST_TURNOVER_COLUMNS])
+
+    epsilon = 1e-12
+    composition = (
+        detail_frame.groupby(["active_date", "symbol"], as_index=False)
+        .agg(weight=("weight", "sum"))
+        .sort_values(["active_date", "symbol"])
+    )
+
+    rows: list[dict[str, object]] = []
+    previous_weights = pd.Series(dtype=float)
+    for active_date, frame in composition.groupby("active_date", sort=True):
+        current_weights = frame.set_index("symbol")["weight"].sort_index()
+        union_index = previous_weights.index.union(current_weights.index)
+        previous = previous_weights.reindex(union_index, fill_value=0.0)
+        current = current_weights.reindex(union_index, fill_value=0.0)
+        deltas = current - previous
+        bought_weight = float(deltas.clip(lower=0.0).sum())
+        sold_weight = float((-deltas.clip(upper=0.0)).sum())
+        turnover = float(max(bought_weight, sold_weight))
+        rows.append(
+            {
+                "date": pd.Timestamp(active_date),
+                "entries_count": int(
+                    ((previous <= epsilon) & (current > epsilon)).sum()
+                ),
+                "exits_count": int(
+                    ((previous > epsilon) & (current <= epsilon)).sum()
+                ),
+                "holdings_count": int((current > epsilon).sum()),
+                "turnover": turnover,
+                "turnover_cost": float(
+                    turnover * execution_assumptions.total_cost_rate_per_side
+                ),
+            }
+        )
+        previous_weights = current_weights
+
+    return pd.DataFrame(rows)
 
 
 def build_group_summary(
@@ -209,6 +294,39 @@ def build_benchmark_relative_summary(
             "information_ratio": information_ratio,
             "relative_max_drawdown": float(analytics_frame["relative_drawdown"].min()),
         },
+    }
+
+
+def build_turnover_summary(portfolio_returns: pd.DataFrame) -> dict[str, object]:
+    """Build summary statistics for turnover-aware backtest reporting."""
+
+    if portfolio_returns.empty:
+        return {
+            "average_turnover": 0.0,
+            "max_turnover": 0.0,
+            "average_holdings_count": 0.0,
+            "total_entries": 0,
+            "total_exits": 0,
+            "turnover_cost_share": 0.0,
+        }
+
+    total_cost_drag = float(
+        portfolio_returns["transaction_cost"].sum() + portfolio_returns["slippage_cost"].sum()
+    )
+    total_turnover_cost = float(portfolio_returns["turnover_cost"].sum())
+    turnover_cost_share = (
+        float(total_turnover_cost / total_cost_drag)
+        if total_cost_drag > 0
+        else 0.0
+    )
+
+    return {
+        "average_turnover": float(portfolio_returns["turnover"].mean()),
+        "max_turnover": float(portfolio_returns["turnover"].max()),
+        "average_holdings_count": float(portfolio_returns["holdings_count"].mean()),
+        "total_entries": int(portfolio_returns["entries_count"].sum()),
+        "total_exits": int(portfolio_returns["exits_count"].sum()),
+        "turnover_cost_share": turnover_cost_share,
     }
 
 

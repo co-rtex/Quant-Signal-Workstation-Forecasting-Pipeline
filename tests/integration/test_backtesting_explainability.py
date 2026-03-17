@@ -12,6 +12,8 @@ import pandas as pd
 from quant_signal.backtesting.analytics import (
     BACKTEST_ANALYTICS_VERSION,
     BACKTEST_ARTIFACT_COLUMNS,
+    BACKTEST_DETAIL_ARTIFACT_COLUMNS,
+    BACKTEST_DETAIL_ARTIFACT_VERSION,
 )
 from quant_signal.backtesting.execution import BacktestExecutionAssumptions
 from quant_signal.backtesting.regimes import REGIME_DEFINITION_VERSION
@@ -127,14 +129,17 @@ def test_backtesting_and_explainability(tmp_path: Path) -> None:
 
     baseline_artifact = pd.read_parquet(baseline_backtest_run.artifact_path)
     cost_artifact = pd.read_parquet(cost_backtest_run.artifact_path)
+    detail_artifact = pd.read_parquet(cost_backtest_run.metadata_json["detail_artifact_path"])
 
     assert Path(baseline_backtest_run.artifact_path).exists()
     assert Path(cost_backtest_run.artifact_path).exists()
+    assert Path(cost_backtest_run.metadata_json["detail_artifact_path"]).exists()
     assert Path(shap_run.artifact_path).exists()
     assert baseline_backtest_run.artifact_path != cost_backtest_run.artifact_path
     assert "cumulative_return" in baseline_backtest_run.summary_json
     assert shap_run.summary_json["global_importance"]
     assert list(cost_artifact.columns) == BACKTEST_ARTIFACT_COLUMNS
+    assert list(detail_artifact.columns) == BACKTEST_DETAIL_ARTIFACT_COLUMNS
     assert np.allclose(
         baseline_artifact["gross_return"],
         baseline_artifact["net_return"],
@@ -159,6 +164,11 @@ def test_backtesting_and_explainability(tmp_path: Path) -> None:
         cost_artifact["benchmark_cumulative_return"],
         (1.0 + cost_artifact["benchmark_return"]).cumprod() - 1.0,
     )
+    assert {"entries_count", "exits_count", "holdings_count", "turnover", "turnover_cost"}.issubset(
+        cost_artifact.columns
+    )
+    assert (cost_artifact["turnover"] >= 0).all()
+    assert (cost_artifact["holdings_count"] >= 0).all()
     assert (cost_artifact["transaction_cost"] > 0).any()
     assert (cost_artifact["slippage_cost"] > 0).any()
     assert np.all(cost_artifact["gross_return"] >= cost_artifact["net_return"])
@@ -175,9 +185,13 @@ def test_backtesting_and_explainability(tmp_path: Path) -> None:
     assert cost_backtest_run.summary_json["total_cost_drag"] > 0
     assert "benchmark_metrics" in cost_backtest_run.summary_json
     assert "active_metrics" in cost_backtest_run.summary_json
+    assert "turnover_metrics" in cost_backtest_run.summary_json
     assert "dimension_summaries" in cost_backtest_run.summary_json
     assert cost_backtest_run.summary_json["benchmark_metrics"]["benchmark_symbol"] == "SPY"
     assert cost_backtest_run.summary_json["active_metrics"]["tracking_error"] >= 0
+    assert cost_backtest_run.summary_json["turnover_metrics"]["average_turnover"] >= 0
+    assert cost_backtest_run.summary_json["turnover_metrics"]["total_entries"] >= 0
+    assert cost_backtest_run.summary_json["turnover_metrics"]["total_exits"] >= 0
     assert {
         "trend_flag",
         "volatility_flag",
@@ -206,6 +220,10 @@ def test_backtesting_and_explainability(tmp_path: Path) -> None:
     assert cost_backtest_run.metadata_json["sleeves_closed"] > 0
     assert cost_backtest_run.metadata_json["benchmark_symbol"] == "SPY"
     assert (
+        cost_backtest_run.metadata_json["backtest_detail_artifact_version"]
+        == BACKTEST_DETAIL_ARTIFACT_VERSION
+    )
+    assert (
         cost_backtest_run.metadata_json["backtest_analytics_version"]
         == BACKTEST_ANALYTICS_VERSION
     )
@@ -213,3 +231,4 @@ def test_backtesting_and_explainability(tmp_path: Path) -> None:
         cost_backtest_run.metadata_json["regime_definition_version"]
         == REGIME_DEFINITION_VERSION
     )
+    assert cost_backtest_run.metadata_json["detail_artifact_hash"]

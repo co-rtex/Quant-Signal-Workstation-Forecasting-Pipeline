@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 from quant_signal.backtesting.analytics import (
     BACKTEST_ANALYTICS_VERSION,
-    BACKTEST_ARTIFACT_COLUMNS,
+    BACKTEST_DETAIL_ARTIFACT_COLUMNS,
+    BACKTEST_DETAIL_ARTIFACT_VERSION,
     attach_benchmark_relative_analytics,
     build_benchmark_relative_summary,
     build_dimension_summaries,
     build_group_summary,
+    build_turnover_daily_metrics,
+    build_turnover_summary,
 )
 from quant_signal.backtesting.execution import BacktestExecutionAssumptions
 from quant_signal.backtesting.regimes import (
@@ -32,20 +34,20 @@ from quant_signal.training.artifacts import ModelArtifactBundle
 from quant_signal.training.service import TrainingService
 
 
-@dataclass
-class SleeveReturn:
-    """Daily gross and net return components for one holding sleeve."""
+@dataclass(frozen=True)
+class SleevePositionDetail:
+    """Raw contribution detail for one symbol inside one sleeve on one active date."""
 
+    signal_date: pd.Timestamp
     active_date: pd.Timestamp
+    symbol: str
+    rank: int
     gross_return: float
     transaction_cost: float
     slippage_cost: float
-
-    @property
-    def net_return(self) -> float:
-        """Return the post-cost sleeve return."""
-
-        return self.gross_return - self.transaction_cost - self.slippage_cost
+    is_entry: bool
+    is_exit: bool
+    is_held: bool
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,7 @@ class BacktestSimulationResult:
     """Cost-aware portfolio return series plus execution counts."""
 
     portfolio_returns: pd.DataFrame
+    detail_frame: pd.DataFrame
     sleeves_opened: int
     sleeves_closed: int
 
@@ -150,8 +153,15 @@ class BacktestService:
             top_n=top_n_signals,
             execution_assumptions=resolved_assumptions,
         )
+        detail_artifact_path = self._build_detail_artifact_path(
+            model_version_id=model_version_id,
+            top_n=top_n_signals,
+            execution_assumptions=resolved_assumptions,
+        )
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        detail_artifact_path.parent.mkdir(parents=True, exist_ok=True)
         analytics_frame.to_parquet(artifact_path, index=False)
+        simulation_result.detail_frame.to_parquet(detail_artifact_path, index=False)
 
         with session_scope(self.database_url) as session:
             repository = StorageRepository(session)
@@ -173,6 +183,9 @@ class BacktestService:
                         "benchmark_symbol": self.settings.benchmark_symbol.upper(),
                         "regime_definition_version": REGIME_DEFINITION_VERSION,
                         "backtest_analytics_version": BACKTEST_ANALYTICS_VERSION,
+                        "backtest_detail_artifact_version": BACKTEST_DETAIL_ARTIFACT_VERSION,
+                        "detail_artifact_path": str(detail_artifact_path),
+                        "detail_artifact_hash": sha256_file(detail_artifact_path),
                         "execution_assumptions": resolved_assumptions.to_metadata_json(),
                     },
                 )
@@ -218,8 +231,22 @@ class BacktestService:
         if ranked_signals.empty:
             return BacktestSimulationResult(
                 portfolio_returns=pd.DataFrame(
-                    columns=BACKTEST_ARTIFACT_COLUMNS[:7]
+                    columns=[
+                        "date",
+                        "gross_return",
+                        "transaction_cost",
+                        "slippage_cost",
+                        "net_return",
+                        "active_sleeves",
+                        "portfolio_return",
+                        "entries_count",
+                        "exits_count",
+                        "holdings_count",
+                        "turnover",
+                        "turnover_cost",
+                    ]
                 ),
+                detail_frame=pd.DataFrame(columns=BACKTEST_DETAIL_ARTIFACT_COLUMNS),
                 sleeves_opened=0,
                 sleeves_closed=0,
             )
@@ -233,20 +260,22 @@ class BacktestService:
             symbol: group.reset_index(drop=True)
             for symbol, group in price_frame.groupby("symbol", sort=False)
         }
-        sleeve_returns_by_date: dict[pd.Timestamp, list[float]] = defaultdict(list)
-        sleeve_details_by_date: dict[pd.Timestamp, list[SleeveReturn]] = defaultdict(list)
+        raw_detail_rows: list[SleevePositionDetail] = []
         sleeves_opened = 0
         sleeves_closed = 0
 
         for signal_date, signal_rows in ranked_signals.groupby("date"):
-            selected_symbols = signal_rows.sort_values("rank").head(top_n)["symbol"].tolist()
-            if not selected_symbols:
+            selected_rows = signal_rows.sort_values("rank").head(top_n).copy()
+            if selected_rows.empty:
                 continue
 
-            sleeve_series: list[SleeveReturn] = []
+            selected_symbols = selected_rows["symbol"].tolist()
+            rank_map = {
+                str(row.symbol): int(row.rank)
+                for row in selected_rows.itertuples(index=False)
+            }
             for offset in range(1, horizon_days + 1):
-                symbol_returns: list[float] = []
-                active_date: pd.Timestamp | None = None
+                position_details: list[SleevePositionDetail] = []
                 for symbol in selected_symbols:
                     history = symbol_history[symbol]
                     current_positions = history.index[history["date"] == signal_date].tolist()
@@ -257,10 +286,24 @@ class BacktestService:
                         continue
                     active_date = history.loc[next_position, "date"]
                     daily_return = history.loc[next_position, "daily_return"]
-                    if pd.notna(daily_return):
-                        symbol_returns.append(float(daily_return))
+                    if pd.isna(daily_return):
+                        continue
+                    position_details.append(
+                        SleevePositionDetail(
+                            signal_date=pd.Timestamp(signal_date),
+                            active_date=pd.Timestamp(active_date),
+                            symbol=str(symbol),
+                            rank=rank_map[str(symbol)],
+                            gross_return=float(daily_return),
+                            transaction_cost=0.0,
+                            slippage_cost=0.0,
+                            is_entry=offset == 1,
+                            is_exit=offset == horizon_days,
+                            is_held=1 < offset < horizon_days,
+                        )
+                    )
 
-                if active_date is not None and symbol_returns:
+                if position_details:
                     transaction_cost = (
                         execution_assumptions.transaction_cost_rate
                         if offset in {1, horizon_days}
@@ -275,49 +318,164 @@ class BacktestService:
                         sleeves_opened += 1
                     if offset == horizon_days:
                         sleeves_closed += 1
-                    sleeve_series.append(
-                        SleeveReturn(
-                            active_date=active_date,
-                            gross_return=float(np.mean(symbol_returns)),
-                            transaction_cost=transaction_cost,
-                            slippage_cost=slippage_cost,
+                    for detail in position_details:
+                        raw_detail_rows.append(
+                            SleevePositionDetail(
+                                signal_date=detail.signal_date,
+                                active_date=detail.active_date,
+                                symbol=detail.symbol,
+                                rank=detail.rank,
+                                gross_return=detail.gross_return,
+                                transaction_cost=transaction_cost,
+                                slippage_cost=slippage_cost,
+                                is_entry=detail.is_entry,
+                                is_exit=detail.is_exit,
+                                is_held=detail.is_held,
+                            )
                         )
-                    )
 
-            for sleeve_return in sleeve_series:
-                sleeve_returns_by_date[sleeve_return.active_date].append(sleeve_return.net_return)
-                sleeve_details_by_date[sleeve_return.active_date].append(sleeve_return)
+        detail_frame = self._build_detail_frame(raw_detail_rows)
+        if detail_frame.empty:
+            portfolio_returns = pd.DataFrame(
+                columns=[
+                    "date",
+                    "gross_return",
+                    "transaction_cost",
+                    "slippage_cost",
+                    "net_return",
+                    "active_sleeves",
+                    "portfolio_return",
+                    "entries_count",
+                    "exits_count",
+                    "holdings_count",
+                    "turnover",
+                    "turnover_cost",
+                ]
+            )
+        else:
+            portfolio_returns = (
+                detail_frame.groupby("active_date", as_index=False)
+                .agg(
+                    gross_return=("gross_return_contribution", "sum"),
+                    transaction_cost=("transaction_cost_contribution", "sum"),
+                    slippage_cost=("slippage_cost_contribution", "sum"),
+                    net_return=("net_return_contribution", "sum"),
+                    active_sleeves=("signal_date", "nunique"),
+                )
+                .rename(columns={"active_date": "date"})
+            )
+            portfolio_returns["portfolio_return"] = portfolio_returns["net_return"]
+        turnover_metrics = build_turnover_daily_metrics(
+            detail_frame,
+            execution_assumptions,
+        )
+        if not turnover_metrics.empty:
+            portfolio_returns = portfolio_returns.merge(
+                turnover_metrics,
+                on="date",
+                how="left",
+            )
+            portfolio_returns[["entries_count", "exits_count", "holdings_count"]] = (
+                portfolio_returns[["entries_count", "exits_count", "holdings_count"]]
+                .fillna(0)
+                .astype(int)
+            )
+            portfolio_returns[["turnover", "turnover_cost"]] = (
+                portfolio_returns[["turnover", "turnover_cost"]].fillna(0.0)
+            )
+        else:
+            for column in (
+                "entries_count",
+                "exits_count",
+                "holdings_count",
+                "turnover",
+                "turnover_cost",
+            ):
+                portfolio_returns[column] = 0.0 if "turnover" in column else 0
+        portfolio_returns = portfolio_returns.sort_values("date").reset_index(drop=True)
 
-        rows = [
-            {
-                "date": active_date,
-                "gross_return": float(
-                    np.mean([sleeve_return.gross_return for sleeve_return in sleeve_details])
-                ),
-                "transaction_cost": float(
-                    np.mean(
-                        [
-                            sleeve_return.transaction_cost
-                            for sleeve_return in sleeve_details
-                        ]
-                    )
-                ),
-                "slippage_cost": float(
-                    np.mean([sleeve_return.slippage_cost for sleeve_return in sleeve_details])
-                ),
-                "net_return": float(np.mean(sleeve_returns)),
-                "active_sleeves": int(len(sleeve_returns)),
-                "portfolio_return": float(np.mean(sleeve_returns)),
-            }
-            for active_date, sleeve_returns in sorted(sleeve_returns_by_date.items())
-            if sleeve_returns
-            for sleeve_details in [sleeve_details_by_date[active_date]]
-        ]
         return BacktestSimulationResult(
-            portfolio_returns=pd.DataFrame(rows),
+            portfolio_returns=portfolio_returns,
+            detail_frame=detail_frame,
             sleeves_opened=sleeves_opened,
             sleeves_closed=sleeves_closed,
         )
+
+    def _build_detail_frame(
+        self,
+        raw_detail_rows: list[SleevePositionDetail],
+    ) -> pd.DataFrame:
+        """Build a normalized detail artifact from raw sleeve-position rows."""
+
+        if not raw_detail_rows:
+            return pd.DataFrame(columns=BACKTEST_DETAIL_ARTIFACT_COLUMNS)
+
+        frame = pd.DataFrame(
+            [
+                {
+                    "signal_date": row.signal_date,
+                    "active_date": row.active_date,
+                    "symbol": row.symbol,
+                    "rank": row.rank,
+                    "gross_return": row.gross_return,
+                    "transaction_cost": row.transaction_cost,
+                    "slippage_cost": row.slippage_cost,
+                    "is_entry": row.is_entry,
+                    "is_exit": row.is_exit,
+                    "is_held": row.is_held,
+                }
+                for row in raw_detail_rows
+            ]
+        )
+        sleeve_sizes = (
+            frame.groupby(["signal_date", "active_date"], as_index=False)
+            .size()
+            .rename(columns={"size": "sleeve_symbol_count"})
+        )
+        active_sleeves = (
+            frame.groupby("active_date", as_index=False)["signal_date"]
+            .nunique()
+            .rename(columns={"signal_date": "active_sleeves"})
+        )
+        frame = frame.merge(sleeve_sizes, on=["signal_date", "active_date"], how="left")
+        frame = frame.merge(active_sleeves, on="active_date", how="left")
+        sleeve_symbol_count = frame["sleeve_symbol_count"].astype(float)
+        active_sleeve_count = frame["active_sleeves"].astype(float)
+        frame["weight"] = (
+            1.0 / (sleeve_symbol_count * active_sleeve_count)
+        )
+        frame["gross_return_contribution"] = frame["weight"] * frame["gross_return"]
+        frame["transaction_cost_contribution"] = frame["weight"] * frame["transaction_cost"]
+        frame["slippage_cost_contribution"] = frame["weight"] * frame["slippage_cost"]
+        frame["net_return_contribution"] = (
+            frame["gross_return_contribution"]
+            - frame["transaction_cost_contribution"]
+            - frame["slippage_cost_contribution"]
+        )
+        return frame[BACKTEST_DETAIL_ARTIFACT_COLUMNS].sort_values(
+            ["active_date", "signal_date", "rank", "symbol"]
+        ).reset_index(drop=True)
+
+    def _build_artifact_fingerprint(
+        self,
+        model_version_id: str,
+        top_n: int,
+        execution_assumptions: BacktestExecutionAssumptions,
+    ) -> str:
+        """Build a stable artifact fingerprint for one backtest configuration."""
+
+        return sha256_json(
+            {
+                "model_version_id": model_version_id,
+                "top_n": top_n,
+                "min_training_days": self.settings.min_training_days,
+                "benchmark_symbol": self.settings.benchmark_symbol.upper(),
+                "backtest_analytics_version": BACKTEST_ANALYTICS_VERSION,
+                "backtest_detail_artifact_version": BACKTEST_DETAIL_ARTIFACT_VERSION,
+                "regime_definition_version": REGIME_DEFINITION_VERSION,
+                "execution_assumptions": execution_assumptions.to_metadata_json(),
+            }
+        )[:12]
 
     def _build_artifact_path(
         self,
@@ -327,21 +485,34 @@ class BacktestService:
     ) -> Path:
         """Build a reproducible artifact path for one backtest configuration."""
 
-        fingerprint = sha256_json(
-            {
-                "model_version_id": model_version_id,
-                "top_n": top_n,
-                "min_training_days": self.settings.min_training_days,
-                "benchmark_symbol": self.settings.benchmark_symbol.upper(),
-                "backtest_analytics_version": BACKTEST_ANALYTICS_VERSION,
-                "regime_definition_version": REGIME_DEFINITION_VERSION,
-                "execution_assumptions": execution_assumptions.to_metadata_json(),
-            }
-        )[:12]
+        fingerprint = self._build_artifact_fingerprint(
+            model_version_id=model_version_id,
+            top_n=top_n,
+            execution_assumptions=execution_assumptions,
+        )
         return (
             Path(self.settings.artifact_root)
             / "backtests"
             / f"backtest_{model_version_id}_{fingerprint}.parquet"
+        )
+
+    def _build_detail_artifact_path(
+        self,
+        model_version_id: str,
+        top_n: int,
+        execution_assumptions: BacktestExecutionAssumptions,
+    ) -> Path:
+        """Build a reproducible companion detail artifact path."""
+
+        fingerprint = self._build_artifact_fingerprint(
+            model_version_id=model_version_id,
+            top_n=top_n,
+            execution_assumptions=execution_assumptions,
+        )
+        return (
+            Path(self.settings.artifact_root)
+            / "backtests"
+            / f"backtest_{model_version_id}_{fingerprint}_detail.parquet"
         )
 
     def _portfolio_summary(self, portfolio_returns: pd.DataFrame) -> dict[str, object]:
@@ -367,6 +538,7 @@ class BacktestService:
                     portfolio_returns,
                     self.settings.benchmark_symbol.upper(),
                 )["active_metrics"],
+                "turnover_metrics": build_turnover_summary(portfolio_returns),
                 "dimension_summaries": build_dimension_summaries(portfolio_returns),
             }
 
@@ -377,7 +549,7 @@ class BacktestService:
         cumulative_return = float(cumulative_curve.iloc[-1] - 1.0)
         gross_cumulative_return = float(gross_cumulative_curve.iloc[-1] - 1.0)
         annualized_return = float(cumulative_curve.iloc[-1] ** (252 / len(returns)) - 1.0)
-        annualized_volatility = float(returns.std(ddof=0) * np.sqrt(252))
+        annualized_volatility = float(returns.std(ddof=0) * math.sqrt(252))
         sharpe_ratio = (
             float(annualized_return / annualized_volatility)
             if annualized_volatility > 0
@@ -403,6 +575,7 @@ class BacktestService:
             "total_cost_drag": total_transaction_cost + total_slippage_cost,
             "benchmark_metrics": benchmark_summary["benchmark_metrics"],
             "active_metrics": benchmark_summary["active_metrics"],
+            "turnover_metrics": build_turnover_summary(portfolio_returns),
             "dimension_summaries": build_dimension_summaries(portfolio_returns),
         }
 

@@ -32,7 +32,7 @@
 1. Ingestion fetches bars from a provider contract and stores normalized OHLCV rows with source and ingestion metadata.
 2. Feature generation queries persisted bars, joins benchmark context, creates leakage-safe features and labels, and writes a versioned dataset artifact.
 3. Training loads a dataset artifact, applies time-aware splits, fits candidate models, calibrates probabilities, evaluates reliability, and registers the champion model per horizon.
-4. Backtesting retrains monthly in walk-forward mode, scores daily candidates, simulates overlapping horizon sleeves, applies configurable transaction costs and slippage, and records gross/net performance summaries, benchmark-relative analytics, and richer regime slices.
+4. Backtesting retrains monthly in walk-forward mode, scores daily candidates, simulates overlapping horizon sleeves, applies configurable transaction costs and slippage, and records gross/net performance summaries, benchmark-relative analytics, richer regime slices, and turnover-aware detail artifacts.
 5. Explainability loads model bundles and evaluation slices, produces SHAP summaries, and stores explainability artifacts.
 6. FastAPI serves health, model metadata, and ranked historical signal snapshots from persisted records.
 
@@ -44,6 +44,7 @@
 - `BacktestService.run(model_version_id, top_n)` retrains the registered model family in a monthly walk-forward loop and persists summary artifacts.
 - `BacktestService.run(model_version_id, top_n, execution_assumptions)` supports reproducible cost-aware reruns without changing the database schema.
 - `label_regimes(benchmark_frame)` preserves the primary trend/volatility regime while adding benchmark momentum and drawdown context for grouped analytics.
+- Backtest runs now emit a primary daily artifact plus a companion detail artifact referenced from `metadata_json`, which keeps composition-level reporting schema-light and reversible.
 - `ExplainabilityService.generate(model_version_id, sample_size, top_signals)` binds SHAP outputs to a specific registered model artifact and evaluation window.
 - `SignalService.get_ranked_signals(as_of_date, horizon, limit)` is the read-side contract used by the API layer.
 
@@ -53,4 +54,4 @@
 - Keep training request handling out of the API; API remains read-only.
 - Use a free adapter first, but hide it behind a provider interface to avoid leaking vendor assumptions.
 - Store wide feature matrices in Parquet artifacts rather than a mutable wide SQL table.
-- Keep backtesting assumptions explicit and simple: monthly retraining, equal-weight long-only sleeves, benchmark-derived regime labels, configurable per-side transaction cost/slippage assumptions, and benchmark-relative analytics persisted with each run.
+- Keep backtesting assumptions explicit and simple: monthly retraining, equal-weight long-only sleeves, benchmark-derived regime labels, configurable per-side transaction cost/slippage assumptions, benchmark-relative analytics, and companion detail artifacts for turnover-aware reporting.

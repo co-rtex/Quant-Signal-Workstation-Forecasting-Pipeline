@@ -7,9 +7,13 @@ import math
 import pandas as pd
 
 from quant_signal.backtesting.analytics import (
+    BACKTEST_DETAIL_ARTIFACT_COLUMNS,
     attach_benchmark_relative_analytics,
     build_benchmark_relative_summary,
+    build_turnover_daily_metrics,
+    build_turnover_summary,
 )
+from quant_signal.backtesting.execution import BacktestExecutionAssumptions
 
 
 def test_attach_benchmark_relative_analytics_computes_active_returns() -> None:
@@ -23,6 +27,11 @@ def test_attach_benchmark_relative_analytics_computes_active_returns() -> None:
             "slippage_cost": [0.0000, 0.0000, 0.0000],
             "net_return": [0.0100, 0.0200, -0.0100],
             "active_sleeves": [1, 1, 1],
+            "entries_count": [1, 1, 1],
+            "exits_count": [0, 0, 0],
+            "holdings_count": [1, 1, 1],
+            "turnover": [1.0, 0.0, 0.0],
+            "turnover_cost": [0.0, 0.0, 0.0],
             "portfolio_return": [0.0100, 0.0200, -0.0100],
         }
     )
@@ -91,3 +100,64 @@ def test_build_benchmark_relative_summary_returns_tracking_error() -> None:
     assert summary["active_metrics"]["tracking_error"] == expected_tracking_error
     assert summary["active_metrics"]["information_ratio"] is not None
     assert summary["active_metrics"]["relative_max_drawdown"] == -0.0078941176
+
+
+def test_build_turnover_daily_metrics_tracks_entries_and_exits() -> None:
+    """Turnover metrics should reflect composition changes across active dates."""
+
+    detail_frame = pd.DataFrame(
+        {
+            "signal_date": pd.to_datetime(
+                ["2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02"]
+            ),
+            "active_date": pd.to_datetime(
+                ["2024-01-02", "2024-01-02", "2024-01-03", "2024-01-03"]
+            ),
+            "symbol": ["AAPL", "MSFT", "AAPL", "NVDA"],
+            "rank": [1, 2, 1, 2],
+            "weight": [0.5, 0.5, 0.5, 0.5],
+            "is_entry": [True, True, False, True],
+            "is_exit": [False, False, False, False],
+            "is_held": [False, False, True, False],
+            "gross_return_contribution": [0.01, 0.00, 0.02, -0.01],
+            "transaction_cost_contribution": [0.0, 0.0, 0.0, 0.0],
+            "slippage_cost_contribution": [0.0, 0.0, 0.0, 0.0],
+            "net_return_contribution": [0.01, 0.00, 0.02, -0.01],
+        }
+    )[BACKTEST_DETAIL_ARTIFACT_COLUMNS]
+
+    turnover = build_turnover_daily_metrics(
+        detail_frame,
+        BacktestExecutionAssumptions(transaction_cost_bps=5.0, slippage_bps=2.0),
+    )
+
+    assert turnover["entries_count"].tolist() == [2, 1]
+    assert turnover["exits_count"].tolist() == [0, 1]
+    assert turnover["holdings_count"].tolist() == [2, 2]
+    assert turnover["turnover"].tolist() == [1.0, 0.5]
+    assert turnover["turnover_cost"].tolist() == [0.0007, 0.00035]
+
+
+def test_build_turnover_summary_returns_non_negative_metrics() -> None:
+    """Turnover summary should expose aggregate turnover diagnostics."""
+
+    analytics_frame = pd.DataFrame(
+        {
+            "transaction_cost": [0.0004, 0.0002],
+            "slippage_cost": [0.0002, 0.0001],
+            "entries_count": [2, 1],
+            "exits_count": [0, 1],
+            "holdings_count": [2, 2],
+            "turnover": [1.0, 0.5],
+            "turnover_cost": [0.0007, 0.00035],
+        }
+    )
+
+    summary = build_turnover_summary(analytics_frame)
+
+    assert summary["average_turnover"] == 0.75
+    assert summary["max_turnover"] == 1.0
+    assert summary["average_holdings_count"] == 2.0
+    assert summary["total_entries"] == 3
+    assert summary["total_exits"] == 1
+    assert summary["turnover_cost_share"] > 0
