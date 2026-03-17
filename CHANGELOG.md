@@ -23,6 +23,7 @@
 - Provider fetch envelopes, config-driven provider selection, and richer ingestion run metadata
 - Provider failure classification and retry metadata contracts for ingestion runs
 - Deterministic retry handling for transient ingestion failures
+- Shared pipeline CLI foundation with a scheduler-friendly `ingest` command
 - SHAP explainability workflow with persisted global and local explanation artifacts tied to model versions
 
 ### Validated
@@ -43,7 +44,8 @@
 - provider metadata/configuration coverage for ingestion
 - provider failure classification coverage for ingestion
 - deterministic retry execution coverage for ingestion
+- pipeline CLI integration coverage for command execution and failure handling
 
 ### Next
 
-- Scheduled pipeline entrypoints
+- Dataset and training pipeline commands

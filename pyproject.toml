@@ -38,6 +38,7 @@ dev = [
 
 [project.scripts]
 quant-signal-api = "quant_signal.api.app:run"
+quant-signal-pipeline = "quant_signal.cli.pipeline:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/quant_signal"]

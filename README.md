@@ -62,12 +62,25 @@ Production-minded forecasting platform for daily US equities. The system ingests
    make run-api
    ```
 
+6. Run a scheduled-friendly ingestion command:
+
+   ```bash
+   quant-signal-pipeline ingest --start-date 2024-01-02 --end-date 2024-05-31 --symbols AAPL
+   ```
+
 ## Validation Workflow
 
 - `make lint`
 - `make typecheck`
 - `make test`
 - `make validate`
+
+## Pipeline CLI
+
+- `quant-signal-pipeline ingest` is now available as the first thin orchestration command for scheduler-friendly market data ingestion
+- The command delegates directly to `IngestionService`, prints a JSON summary on success, emits a compact JSON error payload on failure, and relies on the hardened provider retry behavior already owned by the ingestion layer
+- `--symbols` is optional; when omitted, the command uses `UNIVERSE_SYMBOLS` from settings
+- Remaining pipeline subcommands for dataset, training, backtest, explainability, and signal publication are intentionally staged as follow-on slices
 
 ## Current Status
 

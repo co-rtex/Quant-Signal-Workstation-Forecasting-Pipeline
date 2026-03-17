@@ -10,6 +10,7 @@
 ## System Boundaries
 
 - `quant_signal.api`: FastAPI application, route handlers, request and response schemas
+- `quant_signal.cli`: thin command wrappers for scheduler-friendly service execution
 - `quant_signal.core`: configuration, hashing, logging, shared constants
 - `quant_signal.storage`: SQLAlchemy models, database sessions, repository helpers
 - `quant_signal.ingestion`: provider contract, development adapter, ingestion orchestration
@@ -35,6 +36,7 @@
 4. Backtesting retrains monthly in walk-forward mode, scores daily candidates, simulates overlapping horizon sleeves, applies configurable transaction costs and slippage, and records gross/net performance summaries, benchmark-relative analytics, richer regime slices, turnover-aware detail artifacts, attribution-ready summaries, and regime-aware attribution summaries.
 5. Explainability loads model bundles and evaluation slices, produces SHAP summaries, and stores explainability artifacts.
 6. FastAPI serves health, model metadata, and ranked historical signal snapshots from persisted records.
+7. The pipeline CLI initializes settings and logging once, dispatches explicit subcommands, and returns machine-readable summaries without owning business logic, retry policy, or workflow state.
 
 ## Contract Points
 
@@ -52,6 +54,7 @@
 - `ExplainabilityService.generate(model_version_id, sample_size, top_signals)` binds SHAP outputs to a specific registered model artifact and evaluation window.
 - `SignalService.get_ranked_signals(as_of_date, horizon, limit)` is the read-side contract used by the API layer.
 - Ingestion run metadata stays schema-light and nested inside `metadata_json`: request parameters, provider configuration, attempt-level retry metadata, provider fetch diagnostics, and persistence counts are persisted without widening the database schema.
+- `quant-signal-pipeline ingest` is the first orchestration command and maps directly to `IngestionService.ingest_daily_bars(...)`, keeping scheduling concerns outside the domain service layer.
 
 ## Initial Tradeoffs
 

@@ -22,7 +22,7 @@ Extend the validated MVP with production-minded realism improvements, starting w
 | 12. Regime-aware attribution analytics | Complete | Regime-sliced implementation diagnostics and grouped attribution summaries |
 | 13. Provider metadata and configuration | Complete | Provider fetch envelope, factory-based selection, and richer ingestion run metadata |
 | 14. Retry-aware ingestion hardening | Complete | Failure classification, deterministic backoff, and attempt-level metadata |
-| 15. Scheduled pipeline entrypoints | Pending | Thin orchestration commands for ingest, build, train, backtest, explain, and publish |
+| 15. Scheduled pipeline entrypoints | In Progress | Shared CLI foundation and `ingest` command complete; remaining subcommands pending |
 
 ## Sequencing Rules
 
@@ -33,11 +33,11 @@ Extend the validated MVP with production-minded realism improvements, starting w
 
 ## Current Task
 
-Implement deterministic retry execution for ingestion fetches.
+Implement the pipeline CLI foundation and `ingest` entrypoint.
 
 ## Next Task
 
-Scheduled pipeline entrypoints.
+Add dataset and training pipeline commands.
 
 ## Key Risks
 
@@ -45,7 +45,7 @@ Scheduled pipeline entrypoints.
 - Reproducibility drift if artifact metadata and database metadata diverge
 - Leakage risk if time-aware dataset generation and validation are not enforced centrally
 - Backtest analytics still exclude benchmark constituent attribution, transaction timing nuance, and multi-strategy comparisons
-- Scheduled orchestration remains deferred until ingestion retries and failure metadata are durable
+- Orchestration must remain thin so command wrappers do not duplicate retry, persistence, or ranking logic already owned by application services
 
 ## Deferred Decisions
 
