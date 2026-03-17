@@ -21,6 +21,7 @@
 - Attribution-ready backtest summaries built from benchmark-relative detail contributions
 - Regime-aware attribution summaries for primary regimes and grouped regime dimensions
 - Provider fetch envelopes, config-driven provider selection, and richer ingestion run metadata
+- Provider failure classification and retry metadata contracts for ingestion runs
 - SHAP explainability workflow with persisted global and local explanation artifacts tied to model versions
 
 ### Validated
@@ -39,8 +40,9 @@
 - attribution-ready detail summary coverage for backtests
 - regime-aware attribution summary coverage for backtests
 - provider metadata/configuration coverage for ingestion
+- provider failure classification coverage for ingestion
 
 ### Next
 
-- Retry-aware market data ingestion
+- Deterministic retry handling for market data ingestion
 - Scheduled pipeline entrypoints

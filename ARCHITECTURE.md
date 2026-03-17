@@ -29,7 +29,7 @@
 
 ## Data Flow
 
-1. Ingestion fetches bars from a provider contract, records request/provider/provider-fetch metadata at the run level, and stores normalized OHLCV rows with source and ingestion metadata.
+1. Ingestion fetches bars from a provider contract, normalizes provider failures into transient or permanent classes, records request/provider/retry/provider-fetch metadata at the run level, and stores normalized OHLCV rows with source and ingestion metadata.
 2. Feature generation queries persisted bars, joins benchmark context, creates leakage-safe features and labels, and writes a versioned dataset artifact.
 3. Training loads a dataset artifact, applies time-aware splits, fits candidate models, calibrates probabilities, evaluates reliability, and registers the champion model per horizon.
 4. Backtesting retrains monthly in walk-forward mode, scores daily candidates, simulates overlapping horizon sleeves, applies configurable transaction costs and slippage, and records gross/net performance summaries, benchmark-relative analytics, richer regime slices, turnover-aware detail artifacts, attribution-ready summaries, and regime-aware attribution summaries.
@@ -39,6 +39,7 @@
 ## Contract Points
 
 - `MarketDataProvider.fetch_daily_bars(symbols, start_date, end_date)` returns a `ProviderFetchResult` envelope with normalized daily bars, returned-symbol coverage, provider metadata, and warnings.
+- Provider adapters raise `ProviderTransientError` or `ProviderPermanentError` so ingestion orchestration stays vendor-agnostic.
 - `FeaturePipeline.build_dataset(as_of_date, symbols, feature_set_version)` owns feature and label materialization plus dataset manifest creation.
 - `TrainingService.train(dataset_version_id, horizons)` owns candidate fitting, probability calibration, evaluation persistence, champion selection, and signal snapshot refresh.
 - `BacktestService.run(model_version_id, top_n)` retrains the registered model family in a monthly walk-forward loop and persists summary artifacts.
@@ -49,7 +50,7 @@
 - Regime-aware attribution reporting stays daily-grain: primary regime summaries live in `regime_summary_json`, while dimension-based attribution summaries live under `summary_json`.
 - `ExplainabilityService.generate(model_version_id, sample_size, top_signals)` binds SHAP outputs to a specific registered model artifact and evaluation window.
 - `SignalService.get_ranked_signals(as_of_date, horizon, limit)` is the read-side contract used by the API layer.
-- Ingestion run metadata stays schema-light and nested inside `metadata_json`: request parameters, provider configuration, provider fetch diagnostics, and persistence counts are persisted without widening the database schema.
+- Ingestion run metadata stays schema-light and nested inside `metadata_json`: request parameters, provider configuration, attempt-level retry metadata, provider fetch diagnostics, and persistence counts are persisted without widening the database schema.
 
 ## Initial Tradeoffs
 

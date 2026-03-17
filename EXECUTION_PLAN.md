@@ -21,7 +21,7 @@ Extend the validated MVP with production-minded realism improvements, starting w
 | 11. Attribution-ready analytics foundation | Complete | Detail-artifact benchmark contributions and lifecycle attribution summaries |
 | 12. Regime-aware attribution analytics | Complete | Regime-sliced implementation diagnostics and grouped attribution summaries |
 | 13. Provider metadata and configuration | Complete | Provider fetch envelope, factory-based selection, and richer ingestion run metadata |
-| 14. Retry-aware ingestion hardening | Pending | Failure classification, deterministic backoff, and attempt-level metadata |
+| 14. Retry-aware ingestion hardening | In Progress | Failure classification and attempt metadata complete; deterministic backoff pending |
 | 15. Scheduled pipeline entrypoints | Pending | Thin orchestration commands for ingest, build, train, backtest, explain, and publish |
 
 ## Sequencing Rules
@@ -33,11 +33,11 @@ Extend the validated MVP with production-minded realism improvements, starting w
 
 ## Current Task
 
-Implement the provider metadata and configuration foundation.
+Implement failure classification and retry metadata for ingestion.
 
 ## Next Task
 
-Retry-aware ingestion hardening.
+Deterministic retry execution for ingestion fetches.
 
 ## Key Risks
 

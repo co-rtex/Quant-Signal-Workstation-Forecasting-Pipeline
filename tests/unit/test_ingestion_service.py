@@ -7,12 +7,21 @@ from datetime import UTC, date, datetime
 import pytest
 
 from quant_signal.core.config import Settings
+from quant_signal.ingestion.errors import (
+    ProviderPermanentError,
+    ProviderTransientError,
+    normalize_provider_error,
+)
 from quant_signal.ingestion.models import MarketDataBar, ProviderFetchResult
 from quant_signal.ingestion.providers import (
     YFinanceMarketDataProvider,
     build_market_data_provider,
 )
-from quant_signal.ingestion.service import summarize_provider_fetch_result
+from quant_signal.ingestion.service import (
+    build_retry_attempt_entry,
+    build_retry_metadata,
+    summarize_provider_fetch_result,
+)
 
 
 def test_build_market_data_provider_returns_yfinance() -> None:
@@ -77,4 +86,71 @@ def test_summarize_provider_fetch_result_tracks_missing_symbols_and_source_updat
         "warnings": ["partial fetch"],
         "source_updated_at_min": "2024-01-02T21:00:00+00:00",
         "source_updated_at_max": "2024-01-03T21:30:00+00:00",
+    }
+
+
+def test_normalize_provider_error_classifies_transient_failures() -> None:
+    """Timeout-like provider failures should be classified as transient."""
+
+    error = normalize_provider_error("yfinance", TimeoutError("request timed out"))
+
+    assert isinstance(error, ProviderTransientError)
+    assert error.provider_name == "yfinance"
+    assert error.cause_type == "TimeoutError"
+    assert error.retriable is True
+
+
+def test_normalize_provider_error_defaults_unknown_failures_to_permanent() -> None:
+    """Unknown provider failures should not be marked retryable by default."""
+
+    error = normalize_provider_error("yfinance", RuntimeError("unexpected failure"))
+
+    assert isinstance(error, ProviderPermanentError)
+    assert error.provider_name == "yfinance"
+    assert error.cause_type == "RuntimeError"
+    assert error.retriable is False
+
+
+def test_build_retry_metadata_records_failed_attempt_shape() -> None:
+    """Retry metadata should be JSON-safe and stable for failed fetch attempts."""
+
+    settings = Settings(
+        market_data_max_attempts=3,
+        market_data_backoff_seconds=1.5,
+        market_data_backoff_multiplier=2.0,
+    )
+    provider_error = ProviderTransientError(
+        "yfinance",
+        "request timed out",
+        cause_type="TimeoutError",
+    )
+    attempt_log = [
+        build_retry_attempt_entry(
+            1,
+            "failed",
+            provider_error,
+        )
+    ]
+
+    retry_metadata = build_retry_metadata(
+        settings,
+        attempt_log,
+        completed_after_retry=False,
+    )
+
+    assert retry_metadata == {
+        "configured_max_attempts": 3,
+        "backoff_seconds": 1.5,
+        "backoff_multiplier": 2.0,
+        "attempt_count": 1,
+        "completed_after_retry": False,
+        "attempt_log": [
+            {
+                "attempt_number": 1,
+                "status": "failed",
+                "retriable": True,
+                "error_type": "TimeoutError",
+                "error_message": "request timed out",
+            }
+        ],
     }
