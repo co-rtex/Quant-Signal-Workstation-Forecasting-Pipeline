@@ -8,7 +8,7 @@ import pandas as pd
 
 from quant_signal.backtesting.execution import BacktestExecutionAssumptions
 
-BACKTEST_ANALYTICS_VERSION = "v4"
+BACKTEST_ANALYTICS_VERSION = "v5"
 BACKTEST_DETAIL_ARTIFACT_VERSION = "v2"
 REGIME_DIMENSIONS = (
     "trend_flag",
@@ -295,6 +295,45 @@ def build_group_summary(
     return summary
 
 
+def build_attribution_group_summary(
+    analytics_frame: pd.DataFrame,
+    group_column: str,
+) -> dict[str, dict[str, object]]:
+    """Build daily-grain attribution summaries for a grouped analytics frame."""
+
+    if analytics_frame.empty or group_column not in analytics_frame.columns:
+        return {}
+
+    attribution_frame = analytics_frame.copy()
+    attribution_frame["transaction_cost_drag"] = attribution_frame[
+        "transaction_cost"
+    ].astype(float)
+    attribution_frame["slippage_cost_drag"] = attribution_frame[
+        "slippage_cost"
+    ].astype(float)
+    attribution_frame["implementation_drag"] = (
+        attribution_frame["transaction_cost_drag"]
+        + attribution_frame["slippage_cost_drag"]
+    )
+    attribution_frame["net_active_return"] = attribution_frame["active_return"].astype(float)
+
+    grouped = attribution_frame.dropna(subset=[group_column]).groupby(group_column)
+    summary: dict[str, dict[str, object]] = {}
+    for group_name, frame in grouped:
+        summary[str(group_name)] = {
+            "sample_count": int(len(frame)),
+            "average_gross_active_return": float(frame["gross_active_return"].mean()),
+            "average_transaction_cost_drag": float(
+                frame["transaction_cost_drag"].mean()
+            ),
+            "average_slippage_cost_drag": float(frame["slippage_cost_drag"].mean()),
+            "average_implementation_drag": float(frame["implementation_drag"].mean()),
+            "average_net_active_return": float(frame["net_active_return"].mean()),
+            "active_hit_rate": float((frame["net_active_return"] > 0).mean()),
+        }
+    return summary
+
+
 def build_benchmark_relative_summary(
     analytics_frame: pd.DataFrame,
     benchmark_symbol: str,
@@ -482,5 +521,16 @@ def build_dimension_summaries(
 
     return {
         dimension: build_group_summary(analytics_frame, dimension)
+        for dimension in REGIME_DIMENSIONS
+    }
+
+
+def build_attribution_dimension_summaries(
+    analytics_frame: pd.DataFrame,
+) -> dict[str, dict[str, dict[str, object]]]:
+    """Build grouped attribution summaries for each supported regime dimension."""
+
+    return {
+        dimension: build_attribution_group_summary(analytics_frame, dimension)
         for dimension in REGIME_DIMENSIONS
     }

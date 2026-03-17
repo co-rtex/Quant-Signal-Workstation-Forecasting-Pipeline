@@ -19,6 +19,7 @@
 - Benchmark-relative backtest analytics with richer momentum and drawdown regime context
 - Turnover-aware backtest reporting with companion detail artifacts
 - Attribution-ready backtest summaries built from benchmark-relative detail contributions
+- Regime-aware attribution summaries for primary regimes and grouped regime dimensions
 - SHAP explainability workflow with persisted global and local explanation artifacts tied to model versions
 
 ### Validated
@@ -35,8 +36,9 @@
 - benchmark-relative analytics and richer regime coverage for backtests
 - turnover analytics unit and integration coverage for backtests
 - attribution-ready detail summary coverage for backtests
+- regime-aware attribution summary coverage for backtests
 
 ### Next
 
-- Regime-aware attribution summaries
-- Provider hardening and scheduled pipeline entrypoints
+- Provider hardening
+- Scheduled pipeline entrypoints

@@ -210,6 +210,7 @@ def test_backtesting_and_explainability(tmp_path: Path) -> None:
     assert "attribution_metrics" in cost_backtest_run.summary_json
     assert "lifecycle_attribution" in cost_backtest_run.summary_json
     assert "dimension_summaries" in cost_backtest_run.summary_json
+    assert "attribution_dimension_summaries" in cost_backtest_run.summary_json
     assert cost_backtest_run.summary_json["benchmark_metrics"]["benchmark_symbol"] == "SPY"
     assert cost_backtest_run.summary_json["active_metrics"]["tracking_error"] >= 0
     assert cost_backtest_run.summary_json["turnover_metrics"]["average_turnover"] >= 0
@@ -244,6 +245,26 @@ def test_backtesting_and_explainability(tmp_path: Path) -> None:
         "momentum_flag",
         "drawdown_bucket",
     }.issubset(cost_backtest_run.summary_json["dimension_summaries"])
+    assert {
+        "trend_flag",
+        "volatility_flag",
+        "momentum_flag",
+        "drawdown_bucket",
+    }.issubset(cost_backtest_run.summary_json["attribution_dimension_summaries"])
+    trend_summary = cost_backtest_run.summary_json["attribution_dimension_summaries"][
+        "trend_flag"
+    ]
+    assert trend_summary
+    trend_metrics = next(iter(trend_summary.values()))
+    assert {
+        "sample_count",
+        "average_gross_active_return",
+        "average_transaction_cost_drag",
+        "average_slippage_cost_drag",
+        "average_implementation_drag",
+        "average_net_active_return",
+        "active_hit_rate",
+    }.issubset(trend_metrics)
     regime_metrics = next(iter(cost_backtest_run.regime_summary_json.values()))
     assert {
         "sample_count",
@@ -252,6 +273,9 @@ def test_backtesting_and_explainability(tmp_path: Path) -> None:
         "benchmark_average_return",
         "average_active_return",
         "average_gross_active_return",
+        "average_transaction_cost_drag",
+        "average_slippage_cost_drag",
+        "average_implementation_drag",
         "hit_rate",
         "active_hit_rate",
     }.issubset(regime_metrics)

@@ -11,6 +11,8 @@ from quant_signal.backtesting.analytics import (
     BACKTEST_DETAIL_BASE_COLUMNS,
     attach_benchmark_relative_analytics,
     attach_detail_benchmark_attribution,
+    build_attribution_dimension_summaries,
+    build_attribution_group_summary,
     build_attribution_metrics,
     build_benchmark_relative_summary,
     build_lifecycle_attribution,
@@ -265,3 +267,49 @@ def test_build_attribution_metrics_and_lifecycle_summaries() -> None:
         lifecycle_attribution["exit"]["net_active_return_contribution"],
         -0.0087,
     )
+
+
+def test_build_attribution_group_summary_returns_daily_average_drag_metrics() -> None:
+    """Grouped attribution summaries should expose daily average drag metrics."""
+
+    analytics_frame = pd.DataFrame(
+        {
+            "regime": ["bull_low_vol", "bull_low_vol", "bear_high_vol"],
+            "trend_flag": ["bull", "bull", "bear"],
+            "portfolio_return": [0.0100, 0.0200, -0.0100],
+            "gross_return": [0.0110, 0.0210, -0.0090],
+            "benchmark_return": [0.0050, 0.0100, -0.0020],
+            "active_return": [0.0050, 0.0100, -0.0080],
+            "gross_active_return": [0.0060, 0.0110, -0.0070],
+            "transaction_cost": [0.0005, 0.0002, 0.0001],
+            "slippage_cost": [0.0002, 0.0001, 0.0001],
+        }
+    )
+
+    regime_summary = build_attribution_group_summary(analytics_frame, "regime")
+    dimension_summaries = build_attribution_dimension_summaries(analytics_frame)
+
+    assert regime_summary["bull_low_vol"]["sample_count"] == 2
+    assert math.isclose(
+        regime_summary["bull_low_vol"]["average_gross_active_return"],
+        0.0085,
+    )
+    assert math.isclose(
+        regime_summary["bull_low_vol"]["average_transaction_cost_drag"],
+        0.00035,
+    )
+    assert math.isclose(
+        regime_summary["bull_low_vol"]["average_slippage_cost_drag"],
+        0.00015,
+    )
+    assert math.isclose(
+        regime_summary["bull_low_vol"]["average_implementation_drag"],
+        0.0005,
+    )
+    assert math.isclose(
+        regime_summary["bull_low_vol"]["average_net_active_return"],
+        0.0075,
+    )
+    assert regime_summary["bull_low_vol"]["active_hit_rate"] == 1.0
+    assert "trend_flag" in dimension_summaries
+    assert "bull" in dimension_summaries["trend_flag"]

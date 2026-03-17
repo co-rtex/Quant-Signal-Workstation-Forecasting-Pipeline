@@ -14,6 +14,8 @@ from quant_signal.backtesting.analytics import (
     BACKTEST_DETAIL_BASE_COLUMNS,
     attach_benchmark_relative_analytics,
     attach_detail_benchmark_attribution,
+    build_attribution_dimension_summaries,
+    build_attribution_group_summary,
     build_attribution_metrics,
     build_benchmark_relative_summary,
     build_dimension_summaries,
@@ -553,6 +555,9 @@ class BacktestService:
                 "attribution_metrics": build_attribution_metrics(detail_frame),
                 "lifecycle_attribution": build_lifecycle_attribution(detail_frame),
                 "dimension_summaries": build_dimension_summaries(portfolio_returns),
+                "attribution_dimension_summaries": build_attribution_dimension_summaries(
+                    portfolio_returns
+                ),
             }
 
         gross_returns = portfolio_returns["gross_return"].astype(float)
@@ -592,6 +597,9 @@ class BacktestService:
             "attribution_metrics": build_attribution_metrics(detail_frame),
             "lifecycle_attribution": build_lifecycle_attribution(detail_frame),
             "dimension_summaries": build_dimension_summaries(portfolio_returns),
+            "attribution_dimension_summaries": build_attribution_dimension_summaries(
+                portfolio_returns
+            ),
         }
 
     def _build_benchmark_analytics(
@@ -632,4 +640,16 @@ class BacktestService:
     ) -> dict[str, dict[str, object]]:
         """Slice portfolio returns by the primary benchmark regime."""
 
-        return build_group_summary(portfolio_returns, "regime")
+        base_summary = build_group_summary(portfolio_returns, "regime")
+        attribution_summary = build_attribution_group_summary(
+            portfolio_returns,
+            "regime",
+        )
+
+        merged_summary: dict[str, dict[str, object]] = {}
+        for regime_name in set(base_summary) | set(attribution_summary):
+            merged_summary[regime_name] = {
+                **base_summary.get(regime_name, {}),
+                **attribution_summary.get(regime_name, {}),
+            }
+        return merged_summary

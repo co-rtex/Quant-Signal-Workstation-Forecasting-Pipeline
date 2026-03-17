@@ -19,7 +19,9 @@ Extend the validated MVP with production-minded realism improvements, starting w
 | 9. Benchmark-relative analytics | Complete | Active-return metrics, richer regime context, benchmark-relative drawdowns |
 | 10. Turnover analytics foundation | Complete | Detail artifact, holdings transitions, turnover-aware reporting |
 | 11. Attribution-ready analytics foundation | Complete | Detail-artifact benchmark contributions and lifecycle attribution summaries |
-| 12. Regime-aware attribution analytics | Pending | Regime-sliced implementation diagnostics and grouped attribution summaries |
+| 12. Regime-aware attribution analytics | Complete | Regime-sliced implementation diagnostics and grouped attribution summaries |
+| 13. Provider hardening | Pending | Stronger ingestion metadata, retry behavior, and provider configuration ergonomics |
+| 14. Scheduled pipeline entrypoints | Pending | Thin orchestration commands for ingest, build, train, backtest, explain, and publish |
 
 ## Sequencing Rules
 
@@ -30,22 +32,22 @@ Extend the validated MVP with production-minded realism improvements, starting w
 
 ## Current Task
 
-Plan the next post-attribution slice: regime-aware attribution summaries.
+Plan the next post-reporting slice: provider hardening.
 
 ## Next Task
 
-Regime-aware attribution summaries and benchmark attribution hooks.
+Provider hardening and retry-aware ingestion metadata.
 
 ## Key Risks
 
 - Package compatibility on Python `3.14`
 - Reproducibility drift if artifact metadata and database metadata diverge
 - Leakage risk if time-aware dataset generation and validation are not enforced centrally
-- Backtest analytics still exclude regime-sliced attribution, transaction timing nuance, and multi-strategy comparisons
+- Backtest analytics still exclude benchmark constituent attribution, transaction timing nuance, and multi-strategy comparisons
 
 ## Deferred Decisions
 
 - Production market data provider beyond the free dev adapter
 - Deployment target beyond local and CI workflow
 - Hyperparameter search infrastructure beyond baseline champion selection
-- Benchmark attribution, provider hardening, and multi-strategy comparisons
+- Benchmark attribution, deployment workflow, and multi-strategy comparisons

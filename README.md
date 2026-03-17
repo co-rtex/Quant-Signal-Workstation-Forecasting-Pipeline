@@ -79,7 +79,7 @@ The repository now includes the validated platform foundation, database schema, 
 2. Materialize reproducible feature datasets as versioned Parquet artifacts with registry metadata in PostgreSQL.
 3. Train baseline `logistic_regression` and `hist_gradient_boosting` candidates per horizon, calibrate probabilities, and rank the champion with `PR-AUC`, `Brier score`, and `ROC-AUC`.
 4. Persist ranked daily signal snapshots for champion models so the API stays read-only.
-5. Run monthly walk-forward backtests with benchmark-relative analytics, cost-aware net returns, richer benchmark regime context, turnover-aware reporting, and attribution-ready summaries.
+5. Run monthly walk-forward backtests with benchmark-relative analytics, cost-aware net returns, richer benchmark regime context, turnover-aware reporting, attribution-ready summaries, and regime-aware attribution slices.
 6. Generate global and local SHAP summaries tied to a concrete model version and evaluation window.
 
 ## Backtest Cost Assumptions
@@ -97,3 +97,4 @@ The repository now includes the validated platform foundation, database schema, 
 - Backtest runs also persist a companion detail artifact with composition-level rows for turnover and benchmark-relative contribution diagnostics
 - Daily backtest artifacts now include `entries_count`, `exits_count`, `holdings_count`, `turnover`, and `turnover_cost`
 - `summary_json` now includes top-level `attribution_metrics` and lifecycle-based `lifecycle_attribution` summaries keyed by `entry`, `held`, and `exit`
+- `regime_summary_json` now includes daily average transaction/slippage/implementation drag fields for the primary regime keys, and `summary_json["attribution_dimension_summaries"]` carries the same daily-grain attribution view for each regime dimension
