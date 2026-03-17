@@ -8,14 +8,19 @@ import pandas as pd
 
 from quant_signal.backtesting.execution import BacktestExecutionAssumptions
 
-BACKTEST_ANALYTICS_VERSION = "v3"
-BACKTEST_DETAIL_ARTIFACT_VERSION = "v1"
+BACKTEST_ANALYTICS_VERSION = "v4"
+BACKTEST_DETAIL_ARTIFACT_VERSION = "v2"
 REGIME_DIMENSIONS = (
     "trend_flag",
     "volatility_flag",
     "momentum_flag",
     "drawdown_bucket",
 )
+LIFECYCLE_FLAGS = {
+    "entry": "is_entry",
+    "held": "is_held",
+    "exit": "is_exit",
+}
 BACKTEST_TURNOVER_COLUMNS = [
     "entries_count",
     "exits_count",
@@ -50,7 +55,7 @@ BACKTEST_ARTIFACT_COLUMNS = [
     "momentum_20d",
     "drawdown_63d",
 ]
-BACKTEST_DETAIL_ARTIFACT_COLUMNS = [
+BACKTEST_DETAIL_BASE_COLUMNS = [
     "signal_date",
     "active_date",
     "symbol",
@@ -63,6 +68,17 @@ BACKTEST_DETAIL_ARTIFACT_COLUMNS = [
     "transaction_cost_contribution",
     "slippage_cost_contribution",
     "net_return_contribution",
+]
+BACKTEST_DETAIL_ATTRIBUTION_COLUMNS = [
+    "benchmark_return",
+    "benchmark_return_contribution",
+    "gross_active_return_contribution",
+    "implementation_drag_contribution",
+    "net_active_return_contribution",
+]
+BACKTEST_DETAIL_ARTIFACT_COLUMNS = [
+    *BACKTEST_DETAIL_BASE_COLUMNS,
+    *BACKTEST_DETAIL_ATTRIBUTION_COLUMNS,
 ]
 
 
@@ -206,6 +222,54 @@ def build_turnover_daily_metrics(
     return pd.DataFrame(rows)
 
 
+def attach_detail_benchmark_attribution(
+    detail_frame: pd.DataFrame,
+    benchmark_analytics: pd.DataFrame,
+) -> pd.DataFrame:
+    """Attach benchmark-relative contribution fields to detail artifact rows."""
+
+    if detail_frame.empty:
+        return pd.DataFrame(columns=BACKTEST_DETAIL_ARTIFACT_COLUMNS)
+
+    benchmark_returns = benchmark_analytics[["date", "benchmark_return"]].rename(
+        columns={"date": "active_date"}
+    )
+    attributed_detail = detail_frame.merge(
+        benchmark_returns,
+        on="active_date",
+        how="left",
+    )
+
+    missing_dates = (
+        attributed_detail.loc[attributed_detail["benchmark_return"].isna(), "active_date"]
+        .drop_duplicates()
+        .dt.strftime("%Y-%m-%d")
+        .tolist()
+    )
+    if missing_dates:
+        preview = ", ".join(missing_dates[:5])
+        raise ValueError(
+            f"Missing benchmark coverage for detail artifact dates: {preview}"
+        )
+
+    attributed_detail["benchmark_return_contribution"] = (
+        attributed_detail["weight"] * attributed_detail["benchmark_return"]
+    )
+    attributed_detail["gross_active_return_contribution"] = (
+        attributed_detail["gross_return_contribution"]
+        - attributed_detail["benchmark_return_contribution"]
+    )
+    attributed_detail["implementation_drag_contribution"] = (
+        attributed_detail["transaction_cost_contribution"]
+        + attributed_detail["slippage_cost_contribution"]
+    )
+    attributed_detail["net_active_return_contribution"] = (
+        attributed_detail["gross_active_return_contribution"]
+        - attributed_detail["implementation_drag_contribution"]
+    )
+    return attributed_detail[BACKTEST_DETAIL_ARTIFACT_COLUMNS].copy()
+
+
 def build_group_summary(
     analytics_frame: pd.DataFrame,
     group_column: str,
@@ -328,6 +392,87 @@ def build_turnover_summary(portfolio_returns: pd.DataFrame) -> dict[str, object]
         "total_exits": int(portfolio_returns["exits_count"].sum()),
         "turnover_cost_share": turnover_cost_share,
     }
+
+
+def build_attribution_metrics(detail_frame: pd.DataFrame) -> dict[str, float]:
+    """Build additive attribution totals from an attributed detail artifact."""
+
+    if detail_frame.empty:
+        return {
+            "gross_active_return": 0.0,
+            "total_transaction_cost_drag": 0.0,
+            "total_slippage_cost_drag": 0.0,
+            "total_implementation_drag": 0.0,
+            "net_active_return": 0.0,
+        }
+
+    total_transaction_cost_drag = float(
+        detail_frame["transaction_cost_contribution"].sum()
+    )
+    total_slippage_cost_drag = float(
+        detail_frame["slippage_cost_contribution"].sum()
+    )
+    total_implementation_drag = float(
+        detail_frame["implementation_drag_contribution"].sum()
+    )
+    return {
+        "gross_active_return": float(
+            detail_frame["gross_active_return_contribution"].sum()
+        ),
+        "total_transaction_cost_drag": total_transaction_cost_drag,
+        "total_slippage_cost_drag": total_slippage_cost_drag,
+        "total_implementation_drag": total_implementation_drag,
+        "net_active_return": float(detail_frame["net_active_return_contribution"].sum()),
+    }
+
+
+def build_lifecycle_attribution(
+    detail_frame: pd.DataFrame,
+) -> dict[str, dict[str, float | int]]:
+    """Build lifecycle attribution slices for entry, held, and exit rows."""
+
+    empty_metrics: dict[str, float | int] = {
+        "position_day_count": 0,
+        "average_weight": 0.0,
+        "gross_active_return_contribution": 0.0,
+        "transaction_cost_drag": 0.0,
+        "slippage_cost_drag": 0.0,
+        "implementation_drag": 0.0,
+        "net_active_return_contribution": 0.0,
+    }
+    if detail_frame.empty:
+        return {
+            lifecycle: dict(empty_metrics)
+            for lifecycle in LIFECYCLE_FLAGS
+        }
+
+    lifecycle_summary: dict[str, dict[str, float | int]] = {}
+    for lifecycle, flag_column in LIFECYCLE_FLAGS.items():
+        lifecycle_frame = detail_frame[detail_frame[flag_column].fillna(False)]
+        if lifecycle_frame.empty:
+            lifecycle_summary[lifecycle] = dict(empty_metrics)
+            continue
+
+        lifecycle_summary[lifecycle] = {
+            "position_day_count": int(len(lifecycle_frame)),
+            "average_weight": float(lifecycle_frame["weight"].mean()),
+            "gross_active_return_contribution": float(
+                lifecycle_frame["gross_active_return_contribution"].sum()
+            ),
+            "transaction_cost_drag": float(
+                lifecycle_frame["transaction_cost_contribution"].sum()
+            ),
+            "slippage_cost_drag": float(
+                lifecycle_frame["slippage_cost_contribution"].sum()
+            ),
+            "implementation_drag": float(
+                lifecycle_frame["implementation_drag_contribution"].sum()
+            ),
+            "net_active_return_contribution": float(
+                lifecycle_frame["net_active_return_contribution"].sum()
+            ),
+        }
+    return lifecycle_summary
 
 
 def build_dimension_summaries(

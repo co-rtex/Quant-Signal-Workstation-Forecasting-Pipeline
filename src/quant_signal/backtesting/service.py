@@ -10,12 +10,15 @@ import pandas as pd
 
 from quant_signal.backtesting.analytics import (
     BACKTEST_ANALYTICS_VERSION,
-    BACKTEST_DETAIL_ARTIFACT_COLUMNS,
     BACKTEST_DETAIL_ARTIFACT_VERSION,
+    BACKTEST_DETAIL_BASE_COLUMNS,
     attach_benchmark_relative_analytics,
+    attach_detail_benchmark_attribution,
+    build_attribution_metrics,
     build_benchmark_relative_summary,
     build_dimension_summaries,
     build_group_summary,
+    build_lifecycle_attribution,
     build_turnover_daily_metrics,
     build_turnover_summary,
 )
@@ -145,8 +148,12 @@ class BacktestService:
             simulation_result.portfolio_returns,
             benchmark_analytics,
         )
+        detail_artifact = attach_detail_benchmark_attribution(
+            simulation_result.detail_frame,
+            benchmark_analytics,
+        )
         regime_summary = self._build_regime_summary(analytics_frame)
-        summary_json = self._portfolio_summary(analytics_frame)
+        summary_json = self._portfolio_summary(analytics_frame, detail_artifact)
 
         artifact_path = self._build_artifact_path(
             model_version_id=model_version_id,
@@ -161,7 +168,7 @@ class BacktestService:
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
         detail_artifact_path.parent.mkdir(parents=True, exist_ok=True)
         analytics_frame.to_parquet(artifact_path, index=False)
-        simulation_result.detail_frame.to_parquet(detail_artifact_path, index=False)
+        detail_artifact.to_parquet(detail_artifact_path, index=False)
 
         with session_scope(self.database_url) as session:
             repository = StorageRepository(session)
@@ -246,7 +253,7 @@ class BacktestService:
                         "turnover_cost",
                     ]
                 ),
-                detail_frame=pd.DataFrame(columns=BACKTEST_DETAIL_ARTIFACT_COLUMNS),
+                detail_frame=pd.DataFrame(columns=BACKTEST_DETAIL_BASE_COLUMNS),
                 sleeves_opened=0,
                 sleeves_closed=0,
             )
@@ -408,7 +415,7 @@ class BacktestService:
         """Build a normalized detail artifact from raw sleeve-position rows."""
 
         if not raw_detail_rows:
-            return pd.DataFrame(columns=BACKTEST_DETAIL_ARTIFACT_COLUMNS)
+            return pd.DataFrame(columns=BACKTEST_DETAIL_BASE_COLUMNS)
 
         frame = pd.DataFrame(
             [
@@ -452,7 +459,7 @@ class BacktestService:
             - frame["transaction_cost_contribution"]
             - frame["slippage_cost_contribution"]
         )
-        return frame[BACKTEST_DETAIL_ARTIFACT_COLUMNS].sort_values(
+        return frame[BACKTEST_DETAIL_BASE_COLUMNS].sort_values(
             ["active_date", "signal_date", "rank", "symbol"]
         ).reset_index(drop=True)
 
@@ -515,7 +522,11 @@ class BacktestService:
             / f"backtest_{model_version_id}_{fingerprint}_detail.parquet"
         )
 
-    def _portfolio_summary(self, portfolio_returns: pd.DataFrame) -> dict[str, object]:
+    def _portfolio_summary(
+        self,
+        portfolio_returns: pd.DataFrame,
+        detail_frame: pd.DataFrame,
+    ) -> dict[str, object]:
         """Compute summary statistics for a portfolio return series."""
 
         if portfolio_returns.empty:
@@ -539,6 +550,8 @@ class BacktestService:
                     self.settings.benchmark_symbol.upper(),
                 )["active_metrics"],
                 "turnover_metrics": build_turnover_summary(portfolio_returns),
+                "attribution_metrics": build_attribution_metrics(detail_frame),
+                "lifecycle_attribution": build_lifecycle_attribution(detail_frame),
                 "dimension_summaries": build_dimension_summaries(portfolio_returns),
             }
 
@@ -576,6 +589,8 @@ class BacktestService:
             "benchmark_metrics": benchmark_summary["benchmark_metrics"],
             "active_metrics": benchmark_summary["active_metrics"],
             "turnover_metrics": build_turnover_summary(portfolio_returns),
+            "attribution_metrics": build_attribution_metrics(detail_frame),
+            "lifecycle_attribution": build_lifecycle_attribution(detail_frame),
             "dimension_summaries": build_dimension_summaries(portfolio_returns),
         }
 

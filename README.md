@@ -79,7 +79,7 @@ The repository now includes the validated platform foundation, database schema, 
 2. Materialize reproducible feature datasets as versioned Parquet artifacts with registry metadata in PostgreSQL.
 3. Train baseline `logistic_regression` and `hist_gradient_boosting` candidates per horizon, calibrate probabilities, and rank the champion with `PR-AUC`, `Brier score`, and `ROC-AUC`.
 4. Persist ranked daily signal snapshots for champion models so the API stays read-only.
-5. Run monthly walk-forward backtests with benchmark-relative analytics, cost-aware net returns, richer benchmark regime context, and turnover-aware reporting.
+5. Run monthly walk-forward backtests with benchmark-relative analytics, cost-aware net returns, richer benchmark regime context, turnover-aware reporting, and attribution-ready summaries.
 6. Generate global and local SHAP summaries tied to a concrete model version and evaluation window.
 
 ## Backtest Cost Assumptions
@@ -94,5 +94,6 @@ The repository now includes the validated platform foundation, database schema, 
 - Daily backtest artifacts include benchmark-relative fields such as `benchmark_return`, `active_return`, `gross_active_return`, and relative cumulative performance
 - Benchmark regime context now includes the primary trend/volatility regime plus momentum and drawdown dimensions
 - Persisted summaries include benchmark metrics, active-return metrics, and grouped performance slices for `trend_flag`, `volatility_flag`, `momentum_flag`, and `drawdown_bucket`
-- Backtest runs also persist a companion detail artifact with composition-level rows for turnover and attribution-ready diagnostics
+- Backtest runs also persist a companion detail artifact with composition-level rows for turnover and benchmark-relative contribution diagnostics
 - Daily backtest artifacts now include `entries_count`, `exits_count`, `holdings_count`, `turnover`, and `turnover_cost`
+- `summary_json` now includes top-level `attribution_metrics` and lifecycle-based `lifecycle_attribution` summaries keyed by `entry`, `held`, and `exit`

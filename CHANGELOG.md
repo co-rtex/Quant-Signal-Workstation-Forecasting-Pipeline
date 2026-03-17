@@ -18,6 +18,7 @@
 - Configurable transaction cost and slippage modeling for walk-forward backtests
 - Benchmark-relative backtest analytics with richer momentum and drawdown regime context
 - Turnover-aware backtest reporting with companion detail artifacts
+- Attribution-ready backtest summaries built from benchmark-relative detail contributions
 - SHAP explainability workflow with persisted global and local explanation artifacts tied to model versions
 
 ### Validated
@@ -33,8 +34,9 @@
 - cost-aware backtesting unit and integration coverage
 - benchmark-relative analytics and richer regime coverage for backtests
 - turnover analytics unit and integration coverage for backtests
+- attribution-ready detail summary coverage for backtests
 
 ### Next
 
-- Active return attribution-ready summaries
+- Regime-aware attribution summaries
 - Provider hardening and scheduled pipeline entrypoints

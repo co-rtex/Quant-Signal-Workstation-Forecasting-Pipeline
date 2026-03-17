@@ -164,6 +164,27 @@ def test_backtesting_and_explainability(tmp_path: Path) -> None:
         cost_artifact["benchmark_cumulative_return"],
         (1.0 + cost_artifact["benchmark_return"]).cumprod() - 1.0,
     )
+    detail_reconciliation = (
+        detail_artifact.groupby("active_date", as_index=False)
+        .agg(
+            gross_active_return=("gross_active_return_contribution", "sum"),
+            active_return=("net_active_return_contribution", "sum"),
+        )
+        .rename(columns={"active_date": "date"})
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+    artifact_reconciliation = cost_artifact[
+        ["date", "gross_active_return", "active_return"]
+    ].sort_values("date").reset_index(drop=True)
+    assert np.allclose(
+        detail_reconciliation["gross_active_return"],
+        artifact_reconciliation["gross_active_return"],
+    )
+    assert np.allclose(
+        detail_reconciliation["active_return"],
+        artifact_reconciliation["active_return"],
+    )
     assert {"entries_count", "exits_count", "holdings_count", "turnover", "turnover_cost"}.issubset(
         cost_artifact.columns
     )
@@ -186,12 +207,37 @@ def test_backtesting_and_explainability(tmp_path: Path) -> None:
     assert "benchmark_metrics" in cost_backtest_run.summary_json
     assert "active_metrics" in cost_backtest_run.summary_json
     assert "turnover_metrics" in cost_backtest_run.summary_json
+    assert "attribution_metrics" in cost_backtest_run.summary_json
+    assert "lifecycle_attribution" in cost_backtest_run.summary_json
     assert "dimension_summaries" in cost_backtest_run.summary_json
     assert cost_backtest_run.summary_json["benchmark_metrics"]["benchmark_symbol"] == "SPY"
     assert cost_backtest_run.summary_json["active_metrics"]["tracking_error"] >= 0
     assert cost_backtest_run.summary_json["turnover_metrics"]["average_turnover"] >= 0
     assert cost_backtest_run.summary_json["turnover_metrics"]["total_entries"] >= 0
     assert cost_backtest_run.summary_json["turnover_metrics"]["total_exits"] >= 0
+    assert np.isclose(
+        cost_backtest_run.summary_json["attribution_metrics"]["gross_active_return"],
+        float(detail_artifact["gross_active_return_contribution"].sum()),
+    )
+    assert np.isclose(
+        cost_backtest_run.summary_json["attribution_metrics"]["net_active_return"],
+        float(detail_artifact["net_active_return_contribution"].sum()),
+    )
+    assert np.isclose(
+        cost_backtest_run.summary_json["attribution_metrics"]["total_transaction_cost_drag"],
+        float(detail_artifact["transaction_cost_contribution"].sum()),
+    )
+    assert np.isclose(
+        cost_backtest_run.summary_json["attribution_metrics"]["total_slippage_cost_drag"],
+        float(detail_artifact["slippage_cost_contribution"].sum()),
+    )
+    lifecycle_attribution = cost_backtest_run.summary_json["lifecycle_attribution"]
+    assert {"entry", "held", "exit"} == set(lifecycle_attribution)
+    assert lifecycle_attribution["entry"]["position_day_count"] >= 0
+    assert lifecycle_attribution["held"]["position_day_count"] >= 0
+    assert lifecycle_attribution["exit"]["position_day_count"] >= 0
+    assert lifecycle_attribution["entry"]["transaction_cost_drag"] >= 0
+    assert lifecycle_attribution["exit"]["slippage_cost_drag"] >= 0
     assert {
         "trend_flag",
         "volatility_flag",

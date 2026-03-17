@@ -8,8 +8,12 @@ import pandas as pd
 
 from quant_signal.backtesting.analytics import (
     BACKTEST_DETAIL_ARTIFACT_COLUMNS,
+    BACKTEST_DETAIL_BASE_COLUMNS,
     attach_benchmark_relative_analytics,
+    attach_detail_benchmark_attribution,
+    build_attribution_metrics,
     build_benchmark_relative_summary,
+    build_lifecycle_attribution,
     build_turnover_daily_metrics,
     build_turnover_summary,
 )
@@ -124,7 +128,7 @@ def test_build_turnover_daily_metrics_tracks_entries_and_exits() -> None:
             "slippage_cost_contribution": [0.0, 0.0, 0.0, 0.0],
             "net_return_contribution": [0.01, 0.00, 0.02, -0.01],
         }
-    )[BACKTEST_DETAIL_ARTIFACT_COLUMNS]
+    )[BACKTEST_DETAIL_BASE_COLUMNS]
 
     turnover = build_turnover_daily_metrics(
         detail_frame,
@@ -161,3 +165,103 @@ def test_build_turnover_summary_returns_non_negative_metrics() -> None:
     assert summary["total_entries"] == 3
     assert summary["total_exits"] == 1
     assert summary["turnover_cost_share"] > 0
+
+
+def test_attach_detail_benchmark_attribution_computes_position_level_contributions() -> None:
+    """Detail attribution should attach benchmark-relative contribution fields."""
+
+    detail_frame = pd.DataFrame(
+        {
+            "signal_date": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+            "active_date": pd.to_datetime(["2024-01-02", "2024-01-03"]),
+            "symbol": ["AAPL", "AAPL"],
+            "rank": [1, 1],
+            "weight": [1.0, 1.0],
+            "is_entry": [True, False],
+            "is_exit": [False, True],
+            "is_held": [False, False],
+            "gross_return_contribution": [0.0100, 0.0200],
+            "transaction_cost_contribution": [0.0005, 0.0005],
+            "slippage_cost_contribution": [0.0002, 0.0002],
+            "net_return_contribution": [0.0093, 0.0193],
+        }
+    )[BACKTEST_DETAIL_BASE_COLUMNS]
+    benchmark_analytics = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-01-02", "2024-01-03"]),
+            "benchmark_return": [0.0050, 0.0100],
+        }
+    )
+
+    attributed_detail = attach_detail_benchmark_attribution(
+        detail_frame,
+        benchmark_analytics,
+    )
+
+    assert list(attributed_detail.columns) == BACKTEST_DETAIL_ARTIFACT_COLUMNS
+    assert attributed_detail["benchmark_return"].tolist() == [0.0050, 0.0100]
+    assert attributed_detail["benchmark_return_contribution"].tolist() == [0.0050, 0.0100]
+    assert attributed_detail["gross_active_return_contribution"].tolist() == [0.0050, 0.0100]
+    assert attributed_detail["implementation_drag_contribution"].tolist() == [0.0007, 0.0007]
+    assert math.isclose(
+        attributed_detail["net_active_return_contribution"].iloc[0],
+        0.0043,
+    )
+    assert math.isclose(
+        attributed_detail["net_active_return_contribution"].iloc[1],
+        0.0093,
+    )
+
+
+def test_build_attribution_metrics_and_lifecycle_summaries() -> None:
+    """Attribution helpers should return additive totals and lifecycle slices."""
+
+    detail_frame = pd.DataFrame(
+        {
+            "signal_date": pd.to_datetime(
+                ["2024-01-01", "2024-01-01", "2024-01-01"]
+            ),
+            "active_date": pd.to_datetime(
+                ["2024-01-02", "2024-01-03", "2024-01-04"]
+            ),
+            "symbol": ["AAPL", "AAPL", "AAPL"],
+            "rank": [1, 1, 1],
+            "weight": [1.0, 1.0, 1.0],
+            "is_entry": [True, False, False],
+            "is_exit": [False, False, True],
+            "is_held": [False, True, False],
+            "gross_return_contribution": [0.0100, 0.0200, -0.0100],
+            "transaction_cost_contribution": [0.0005, 0.0, 0.0005],
+            "slippage_cost_contribution": [0.0002, 0.0, 0.0002],
+            "net_return_contribution": [0.0093, 0.0200, -0.0107],
+        }
+    )[BACKTEST_DETAIL_BASE_COLUMNS]
+    benchmark_analytics = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04"]),
+            "benchmark_return": [0.0050, 0.0100, -0.0020],
+        }
+    )
+
+    attributed_detail = attach_detail_benchmark_attribution(
+        detail_frame,
+        benchmark_analytics,
+    )
+    attribution_metrics = build_attribution_metrics(attributed_detail)
+    lifecycle_attribution = build_lifecycle_attribution(attributed_detail)
+
+    assert math.isclose(attribution_metrics["gross_active_return"], 0.007)
+    assert math.isclose(attribution_metrics["total_transaction_cost_drag"], 0.001)
+    assert math.isclose(attribution_metrics["total_slippage_cost_drag"], 0.0004)
+    assert math.isclose(attribution_metrics["total_implementation_drag"], 0.0014)
+    assert math.isclose(attribution_metrics["net_active_return"], 0.0056)
+    assert lifecycle_attribution["entry"]["position_day_count"] == 1
+    assert lifecycle_attribution["held"]["position_day_count"] == 1
+    assert lifecycle_attribution["exit"]["position_day_count"] == 1
+    assert math.isclose(lifecycle_attribution["entry"]["average_weight"], 1.0)
+    assert math.isclose(lifecycle_attribution["held"]["transaction_cost_drag"], 0.0)
+    assert math.isclose(lifecycle_attribution["exit"]["slippage_cost_drag"], 0.0002)
+    assert math.isclose(
+        lifecycle_attribution["exit"]["net_active_return_contribution"],
+        -0.0087,
+    )
