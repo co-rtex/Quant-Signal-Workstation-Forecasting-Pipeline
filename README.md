@@ -82,6 +82,14 @@ The repository now includes the validated platform foundation, database schema, 
 5. Run monthly walk-forward backtests with benchmark-relative analytics, cost-aware net returns, richer benchmark regime context, turnover-aware reporting, attribution-ready summaries, and regime-aware attribution slices.
 6. Generate global and local SHAP summaries tied to a concrete model version and evaluation window.
 
+## Provider Configuration
+
+- `MARKET_DATA_PROVIDER` defaults to `yfinance`
+- `MARKET_DATA_MAX_ATTEMPTS` defaults to `1` and is reserved for the follow-on retry slice
+- `MARKET_DATA_BACKOFF_SECONDS` defaults to `1.0`
+- `MARKET_DATA_BACKOFF_MULTIPLIER` defaults to `2.0`
+- Ingestion runs now persist nested request, provider, provider-fetch, and persistence metadata so partial or empty fetches are auditable without schema changes
+
 ## Backtest Cost Assumptions
 
 - `BACKTEST_TRANSACTION_COST_BPS` defaults to `0.0`

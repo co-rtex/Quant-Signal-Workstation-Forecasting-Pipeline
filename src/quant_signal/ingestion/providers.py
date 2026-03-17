@@ -9,7 +9,8 @@ from datetime import date, timedelta
 import pandas as pd
 import yfinance as yf
 
-from quant_signal.ingestion.models import MarketDataBar
+from quant_signal.core.config import Settings
+from quant_signal.ingestion.models import MarketDataBar, ProviderFetchResult
 
 
 class MarketDataProvider(ABC):
@@ -23,7 +24,7 @@ class MarketDataProvider(ABC):
         symbols: Sequence[str],
         start_date: date,
         end_date: date,
-    ) -> list[MarketDataBar]:
+    ) -> ProviderFetchResult:
         """Fetch normalized daily bars for the requested symbols."""
 
 
@@ -37,7 +38,7 @@ class YFinanceMarketDataProvider(MarketDataProvider):
         symbols: Sequence[str],
         start_date: date,
         end_date: date,
-    ) -> list[MarketDataBar]:
+    ) -> ProviderFetchResult:
         """Fetch daily OHLCV bars from Yahoo Finance."""
 
         requested = sorted({symbol.upper() for symbol in symbols})
@@ -85,4 +86,21 @@ class YFinanceMarketDataProvider(MarketDataProvider):
                     )
                 )
 
-        return bars
+        return ProviderFetchResult.from_bars(
+            bars,
+            provider_metadata={
+                "interval": "1d",
+                "auto_adjust": False,
+                "actions": False,
+                "threads": False,
+            },
+        )
+
+
+def build_market_data_provider(settings: Settings) -> MarketDataProvider:
+    """Build the configured market data provider from application settings."""
+
+    provider_name = settings.market_data_provider
+    if provider_name == YFinanceMarketDataProvider.name:
+        return YFinanceMarketDataProvider()
+    raise ValueError(f"Unsupported market data provider: {provider_name}")

@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     default_horizons: list[int] = Field(default_factory=lambda: [1, 5, 20])
     top_n_signals: int = Field(default=10)
     min_training_days: int = Field(default=252)
+    market_data_provider: str = Field(default="yfinance")
+    market_data_max_attempts: int = Field(default=1, ge=1)
+    market_data_backoff_seconds: float = Field(default=1.0, ge=0.0)
+    market_data_backoff_multiplier: float = Field(default=2.0, ge=1.0)
     backtest_transaction_cost_bps: float = Field(default=0.0)
     backtest_slippage_bps: float = Field(default=0.0)
 
@@ -52,6 +56,15 @@ class Settings(BaseSettings):
 
         if isinstance(value, str):
             return [int(horizon.strip()) for horizon in value.split(",") if horizon.strip()]
+        return value
+
+    @field_validator("market_data_provider", mode="before")
+    @classmethod
+    def normalize_market_data_provider(cls, value: object) -> object:
+        """Normalize the configured market data provider name."""
+
+        if isinstance(value, str):
+            return value.strip().lower()
         return value
 
 

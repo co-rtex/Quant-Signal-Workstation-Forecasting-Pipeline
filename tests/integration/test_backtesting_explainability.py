@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from quant_signal.backtesting.service import BacktestService
 from quant_signal.core.config import Settings
 from quant_signal.explainability.service import ExplainabilityService
 from quant_signal.features.pipeline import FeaturePipeline
-from quant_signal.ingestion.models import MarketDataBar
+from quant_signal.ingestion.models import MarketDataBar, ProviderFetchResult
 from quant_signal.ingestion.providers import MarketDataProvider
 from quant_signal.ingestion.service import IngestionService
 from quant_signal.storage.db import create_all_tables, session_scope
@@ -39,16 +40,20 @@ class StaticProvider(MarketDataProvider):
 
     def fetch_daily_bars(
         self,
-        symbols: list[str] | tuple[str, ...],
+        symbols: Sequence[str],
         start_date: date,
         end_date: date,
-    ) -> list[MarketDataBar]:
+    ) -> ProviderFetchResult:
         requested = {symbol.upper() for symbol in symbols}
-        return [
+        bars = [
             bar
             for bar in self._bars
             if bar.symbol in requested and start_date <= bar.trade_date <= end_date
         ]
+        return ProviderFetchResult.from_bars(
+            bars,
+            provider_metadata={"fixture": "synthetic"},
+        )
 
     def _build_bars(self, periods: int) -> list[MarketDataBar]:
         bars: list[MarketDataBar] = []

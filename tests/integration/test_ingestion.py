@@ -10,7 +10,7 @@ import pandas as pd
 
 from quant_signal.core.config import Settings
 from quant_signal.features.pipeline import FeaturePipeline
-from quant_signal.ingestion.models import MarketDataBar
+from quant_signal.ingestion.models import MarketDataBar, ProviderFetchResult
 from quant_signal.ingestion.providers import MarketDataProvider
 from quant_signal.ingestion.service import IngestionService
 from quant_signal.storage.db import create_all_tables, session_scope
@@ -30,13 +30,17 @@ class StaticProvider(MarketDataProvider):
         symbols: Sequence[str],
         start_date: date,
         end_date: date,
-    ) -> list[MarketDataBar]:
+    ) -> ProviderFetchResult:
         requested = {symbol.upper() for symbol in symbols}
-        return [
+        filtered_bars = [
             bar
             for bar in self._bars
             if bar.symbol.upper() in requested and start_date <= bar.trade_date <= end_date
         ]
+        return ProviderFetchResult.from_bars(
+            filtered_bars,
+            provider_metadata={"fixture": "synthetic"},
+        )
 
 
 def build_synthetic_bars() -> list[MarketDataBar]:
@@ -96,6 +100,29 @@ def test_ingestion_and_dataset_pipeline(tmp_path: Path) -> None:
 
     assert run.status == "completed"
     assert run.records_written > 0
+    assert run.metadata_json["request"]["benchmark_symbol"] == "SPY"
+    assert run.metadata_json["request"]["requested_symbols"] == ["AAPL"]
+    assert run.metadata_json["request"]["fetch_symbols"] == ["AAPL", "SPY"]
+    assert run.metadata_json["provider"]["name"] == "static"
+    assert run.metadata_json["provider"]["config"] == {
+        "max_attempts": 1,
+        "backoff_seconds": 1.0,
+        "backoff_multiplier": 2.0,
+    }
+    assert run.metadata_json["provider"]["metadata"] == {"fixture": "synthetic"}
+    assert run.metadata_json["provider_fetch"]["returned_symbols"] == ["AAPL", "SPY"]
+    assert run.metadata_json["provider_fetch"]["missing_symbols"] == []
+    assert run.metadata_json["provider_fetch"]["bar_count"] == 180
+    assert run.metadata_json["provider_fetch"]["per_symbol_bar_counts"] == {
+        "AAPL": 90,
+        "SPY": 90,
+    }
+    assert run.metadata_json["provider_fetch"]["first_trade_date"] == "2024-01-02"
+    assert run.metadata_json["provider_fetch"]["last_trade_date"] == "2024-05-06"
+    assert run.metadata_json["provider_fetch"]["warnings"] == []
+    assert run.metadata_json["provider_fetch"]["source_updated_at_min"] is None
+    assert run.metadata_json["provider_fetch"]["source_updated_at_max"] is None
+    assert run.metadata_json["persistence"]["records_written"] == run.records_written
 
     with session_scope(database_url) as session:
         repository = StorageRepository(session)
@@ -110,3 +137,37 @@ def test_ingestion_and_dataset_pipeline(tmp_path: Path) -> None:
     assert Path(dataset.artifact_path).exists()
     assert "momentum_5d" in dataset.feature_columns
     assert "target_up_20d" in dataset.label_columns
+
+
+def test_ingestion_tracks_partial_provider_metadata(tmp_path: Path) -> None:
+    """Ingestion metadata should make partial provider fetches explicit."""
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'partial.sqlite3'}"
+    settings = Settings(
+        database_url=database_url,
+        artifact_root=tmp_path / "artifacts",
+        benchmark_symbol="SPY",
+        universe_symbols=["AAPL", "SPY"],
+        default_horizons=[1, 5, 20],
+    )
+    create_all_tables(database_url)
+
+    partial_bars = [bar for bar in build_synthetic_bars() if bar.symbol == "AAPL"]
+    run = IngestionService(
+        provider=StaticProvider(partial_bars),
+        settings=settings,
+    ).ingest_daily_bars(
+        ["AAPL"],
+        date(2024, 1, 2),
+        date(2024, 5, 31),
+    )
+
+    assert run.status == "completed"
+    assert run.records_written == 90
+    assert run.metadata_json["request"]["fetch_symbols"] == ["AAPL", "SPY"]
+    assert run.metadata_json["provider_fetch"]["returned_symbols"] == ["AAPL"]
+    assert run.metadata_json["provider_fetch"]["missing_symbols"] == ["SPY"]
+    assert run.metadata_json["provider_fetch"]["per_symbol_bar_counts"] == {
+        "AAPL": 90,
+        "SPY": 0,
+    }

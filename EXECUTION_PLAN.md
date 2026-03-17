@@ -20,8 +20,9 @@ Extend the validated MVP with production-minded realism improvements, starting w
 | 10. Turnover analytics foundation | Complete | Detail artifact, holdings transitions, turnover-aware reporting |
 | 11. Attribution-ready analytics foundation | Complete | Detail-artifact benchmark contributions and lifecycle attribution summaries |
 | 12. Regime-aware attribution analytics | Complete | Regime-sliced implementation diagnostics and grouped attribution summaries |
-| 13. Provider hardening | Pending | Stronger ingestion metadata, retry behavior, and provider configuration ergonomics |
-| 14. Scheduled pipeline entrypoints | Pending | Thin orchestration commands for ingest, build, train, backtest, explain, and publish |
+| 13. Provider metadata and configuration | Complete | Provider fetch envelope, factory-based selection, and richer ingestion run metadata |
+| 14. Retry-aware ingestion hardening | Pending | Failure classification, deterministic backoff, and attempt-level metadata |
+| 15. Scheduled pipeline entrypoints | Pending | Thin orchestration commands for ingest, build, train, backtest, explain, and publish |
 
 ## Sequencing Rules
 
@@ -32,11 +33,11 @@ Extend the validated MVP with production-minded realism improvements, starting w
 
 ## Current Task
 
-Plan the next post-reporting slice: provider hardening.
+Implement the provider metadata and configuration foundation.
 
 ## Next Task
 
-Provider hardening and retry-aware ingestion metadata.
+Retry-aware ingestion hardening.
 
 ## Key Risks
 
@@ -44,6 +45,7 @@ Provider hardening and retry-aware ingestion metadata.
 - Reproducibility drift if artifact metadata and database metadata diverge
 - Leakage risk if time-aware dataset generation and validation are not enforced centrally
 - Backtest analytics still exclude benchmark constituent attribution, transaction timing nuance, and multi-strategy comparisons
+- Scheduled orchestration remains deferred until ingestion retries and failure metadata are durable
 
 ## Deferred Decisions
 

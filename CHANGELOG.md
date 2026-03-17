@@ -20,6 +20,7 @@
 - Turnover-aware backtest reporting with companion detail artifacts
 - Attribution-ready backtest summaries built from benchmark-relative detail contributions
 - Regime-aware attribution summaries for primary regimes and grouped regime dimensions
+- Provider fetch envelopes, config-driven provider selection, and richer ingestion run metadata
 - SHAP explainability workflow with persisted global and local explanation artifacts tied to model versions
 
 ### Validated
@@ -37,8 +38,9 @@
 - turnover analytics unit and integration coverage for backtests
 - attribution-ready detail summary coverage for backtests
 - regime-aware attribution summary coverage for backtests
+- provider metadata/configuration coverage for ingestion
 
 ### Next
 
-- Provider hardening
+- Retry-aware market data ingestion
 - Scheduled pipeline entrypoints
