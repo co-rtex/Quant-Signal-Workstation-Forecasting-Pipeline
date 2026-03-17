@@ -22,4 +22,14 @@ def test_label_regimes_returns_regime_column() -> None:
     labeled = label_regimes(frame)
 
     assert "regime" in labeled.columns
-    assert labeled["regime"].notna().sum() > 0
+    assert {
+        "benchmark_return",
+        "momentum_20d",
+        "momentum_flag",
+        "drawdown_63d",
+        "drawdown_bucket",
+    }.issubset(labeled.columns)
+    warm_frame = labeled.iloc[63:].dropna(
+        subset=["regime", "momentum_flag", "drawdown_bucket"]
+    )
+    assert not warm_frame.empty

@@ -9,8 +9,19 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from quant_signal.backtesting.analytics import (
+    BACKTEST_ANALYTICS_VERSION,
+    BACKTEST_ARTIFACT_COLUMNS,
+    attach_benchmark_relative_analytics,
+    build_benchmark_relative_summary,
+    build_dimension_summaries,
+    build_group_summary,
+)
 from quant_signal.backtesting.execution import BacktestExecutionAssumptions
-from quant_signal.backtesting.regimes import label_regimes
+from quant_signal.backtesting.regimes import (
+    REGIME_DEFINITION_VERSION,
+    label_regimes,
+)
 from quant_signal.core.config import Settings, get_settings
 from quant_signal.core.hashing import sha256_file, sha256_json
 from quant_signal.serving.service import rank_signal_frame
@@ -126,11 +137,13 @@ class BacktestService:
             top_n=top_n_signals,
             execution_assumptions=resolved_assumptions,
         )
-        regime_summary = self._build_regime_summary(
-            dataset_frame,
+        benchmark_analytics = self._build_benchmark_analytics(dataset_frame)
+        analytics_frame = attach_benchmark_relative_analytics(
             simulation_result.portfolio_returns,
+            benchmark_analytics,
         )
-        summary_json = self._portfolio_summary(simulation_result.portfolio_returns)
+        regime_summary = self._build_regime_summary(analytics_frame)
+        summary_json = self._portfolio_summary(analytics_frame)
 
         artifact_path = self._build_artifact_path(
             model_version_id=model_version_id,
@@ -138,7 +151,7 @@ class BacktestService:
             execution_assumptions=resolved_assumptions,
         )
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
-        simulation_result.portfolio_returns.to_parquet(artifact_path, index=False)
+        analytics_frame.to_parquet(artifact_path, index=False)
 
         with session_scope(self.database_url) as session:
             repository = StorageRepository(session)
@@ -157,6 +170,9 @@ class BacktestService:
                         "signal_count": int(len(ranked_signals)),
                         "sleeves_opened": simulation_result.sleeves_opened,
                         "sleeves_closed": simulation_result.sleeves_closed,
+                        "benchmark_symbol": self.settings.benchmark_symbol.upper(),
+                        "regime_definition_version": REGIME_DEFINITION_VERSION,
+                        "backtest_analytics_version": BACKTEST_ANALYTICS_VERSION,
                         "execution_assumptions": resolved_assumptions.to_metadata_json(),
                     },
                 )
@@ -202,15 +218,7 @@ class BacktestService:
         if ranked_signals.empty:
             return BacktestSimulationResult(
                 portfolio_returns=pd.DataFrame(
-                    columns=[
-                        "date",
-                        "gross_return",
-                        "transaction_cost",
-                        "slippage_cost",
-                        "net_return",
-                        "active_sleeves",
-                        "portfolio_return",
-                    ]
+                    columns=BACKTEST_ARTIFACT_COLUMNS[:7]
                 ),
                 sleeves_opened=0,
                 sleeves_closed=0,
@@ -324,6 +332,9 @@ class BacktestService:
                 "model_version_id": model_version_id,
                 "top_n": top_n,
                 "min_training_days": self.settings.min_training_days,
+                "benchmark_symbol": self.settings.benchmark_symbol.upper(),
+                "backtest_analytics_version": BACKTEST_ANALYTICS_VERSION,
+                "regime_definition_version": REGIME_DEFINITION_VERSION,
                 "execution_assumptions": execution_assumptions.to_metadata_json(),
             }
         )[:12]
@@ -348,6 +359,15 @@ class BacktestService:
                 "total_transaction_cost": 0.0,
                 "total_slippage_cost": 0.0,
                 "total_cost_drag": 0.0,
+                "benchmark_metrics": build_benchmark_relative_summary(
+                    portfolio_returns,
+                    self.settings.benchmark_symbol.upper(),
+                )["benchmark_metrics"],
+                "active_metrics": build_benchmark_relative_summary(
+                    portfolio_returns,
+                    self.settings.benchmark_symbol.upper(),
+                )["active_metrics"],
+                "dimension_summaries": build_dimension_summaries(portfolio_returns),
             }
 
         gross_returns = portfolio_returns["gross_return"].astype(float)
@@ -366,6 +386,10 @@ class BacktestService:
         drawdown = cumulative_curve / cumulative_curve.cummax() - 1.0
         total_transaction_cost = float(portfolio_returns["transaction_cost"].sum())
         total_slippage_cost = float(portfolio_returns["slippage_cost"].sum())
+        benchmark_summary = build_benchmark_relative_summary(
+            portfolio_returns,
+            self.settings.benchmark_symbol.upper(),
+        )
         return {
             "cumulative_return": cumulative_return,
             "gross_cumulative_return": gross_cumulative_return,
@@ -377,29 +401,47 @@ class BacktestService:
             "total_transaction_cost": total_transaction_cost,
             "total_slippage_cost": total_slippage_cost,
             "total_cost_drag": total_transaction_cost + total_slippage_cost,
+            "benchmark_metrics": benchmark_summary["benchmark_metrics"],
+            "active_metrics": benchmark_summary["active_metrics"],
+            "dimension_summaries": build_dimension_summaries(portfolio_returns),
         }
+
+    def _build_benchmark_analytics(
+        self,
+        market_frame: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Return benchmark analytics and regime labels for the benchmark symbol."""
+
+        benchmark_symbol = self.settings.benchmark_symbol.upper()
+        benchmark_frame = market_frame[
+            market_frame["symbol"] == benchmark_symbol
+        ].copy()
+        if benchmark_frame.empty:
+            if market_frame.empty:
+                raise ValueError(
+                    f"Missing benchmark bars for symbol {benchmark_symbol}."
+                )
+
+            start_date = pd.to_datetime(market_frame["date"]).min().date()
+            end_date = pd.to_datetime(market_frame["date"]).max().date()
+            with session_scope(self.database_url) as session:
+                repository = StorageRepository(session)
+                benchmark_frame = repository.load_daily_bars_frame(
+                    [benchmark_symbol],
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+
+        if benchmark_frame.empty:
+            raise ValueError(f"Missing benchmark bars for symbol {benchmark_symbol}.")
+
+        benchmark_frame["date"] = pd.to_datetime(benchmark_frame["date"])
+        return label_regimes(benchmark_frame)
 
     def _build_regime_summary(
         self,
-        market_frame: pd.DataFrame,
         portfolio_returns: pd.DataFrame,
-    ) -> dict[str, object]:
-        """Slice portfolio returns by benchmark regime."""
+    ) -> dict[str, dict[str, object]]:
+        """Slice portfolio returns by the primary benchmark regime."""
 
-        if portfolio_returns.empty:
-            return {}
-
-        benchmark = market_frame[
-            market_frame["symbol"] == self.settings.benchmark_symbol.upper()
-        ].copy()
-        regimes = label_regimes(benchmark)
-        merged = portfolio_returns.merge(regimes, on="date", how="left")
-
-        summary: dict[str, object] = {}
-        for regime, frame in merged.dropna(subset=["regime"]).groupby("regime"):
-            summary[str(regime)] = {
-                "sample_count": int(len(frame)),
-                "average_return": float(frame["portfolio_return"].mean()),
-                "hit_rate": float((frame["portfolio_return"] > 0).mean()),
-            }
-        return summary
+        return build_group_summary(portfolio_returns, "regime")

@@ -110,7 +110,7 @@ class BacktestRunRecord:
     artifact_path: str
     artifact_hash: str
     summary_json: dict[str, object]
-    regime_summary_json: dict[str, object]
+    regime_summary_json: dict[str, dict[str, object]]
     metadata_json: dict[str, object]
 
 

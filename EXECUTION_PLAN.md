@@ -15,7 +15,9 @@ Extend the validated MVP with production-minded realism improvements, starting w
 | 5. Training and evaluation | Complete | Candidate models, calibration, champion selection, registry writes |
 | 6. Backtesting and explainability | Complete | Monthly walk-forward backtests, regime slices, SHAP artifacts |
 | 7. FastAPI serving | Complete | Ranked signals, model metadata, readiness checks |
-| 8. Backtest realism improvements | In progress | Transaction costs, slippage, and auditable execution assumptions |
+| 8. Backtest cost realism | Complete | Transaction costs, slippage, and auditable execution assumptions |
+| 9. Benchmark-relative analytics | Complete | Active-return metrics, richer regime context, benchmark-relative drawdowns |
+| 10. Attribution-ready analytics | Pending | Turnover analytics, benchmark attribution, and richer portfolio diagnostics |
 
 ## Sequencing Rules
 
@@ -26,22 +28,22 @@ Extend the validated MVP with production-minded realism improvements, starting w
 
 ## Current Task
 
-Add configurable transaction costs and slippage to backtests without changing the persistence schema.
+Plan the next post-analytics backtest slice: turnover metrics and attribution-ready reporting.
 
 ## Next Task
 
-Richer regime definitions and benchmark-relative portfolio analytics.
+Turnover analytics and benchmark attribution hooks.
 
 ## Key Risks
 
 - Package compatibility on Python `3.14`
 - Reproducibility drift if artifact metadata and database metadata diverge
 - Leakage risk if time-aware dataset generation and validation are not enforced centrally
-- Backtest realism still excludes benchmark attribution, turnover analytics, and transaction timing nuance
+- Backtest analytics still exclude turnover attribution, transaction timing nuance, and multi-strategy comparisons
 
 ## Deferred Decisions
 
 - Production market data provider beyond the free dev adapter
 - Deployment target beyond local and CI workflow
 - Hyperparameter search infrastructure beyond baseline champion selection
-- Benchmark-relative analytics, turnover attribution, and multi-strategy comparisons
+- Turnover attribution, benchmark attribution, and multi-strategy comparisons

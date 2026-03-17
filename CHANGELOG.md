@@ -16,6 +16,7 @@
 - Persisted model registry records, signal snapshots, and read-only FastAPI endpoints for signals and model metadata
 - Walk-forward backtesting with benchmark regime summaries and persisted backtest artifacts
 - Configurable transaction cost and slippage modeling for walk-forward backtests
+- Benchmark-relative backtest analytics with richer momentum and drawdown regime context
 - SHAP explainability workflow with persisted global and local explanation artifacts tied to model versions
 
 ### Validated
@@ -29,8 +30,9 @@
 - training-to-API integration test covering model persistence and signal serving
 - backtesting and explainability integration test covering persisted artifacts
 - cost-aware backtesting unit and integration coverage
+- benchmark-relative analytics and richer regime coverage for backtests
 
 ### Next
 
-- Richer regime definitions and benchmark-relative portfolio analytics
+- Turnover analytics and attribution-ready backtest reporting
 - Provider hardening and scheduled pipeline entrypoints

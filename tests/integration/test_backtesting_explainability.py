@@ -9,7 +9,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from quant_signal.backtesting.analytics import (
+    BACKTEST_ANALYTICS_VERSION,
+    BACKTEST_ARTIFACT_COLUMNS,
+)
 from quant_signal.backtesting.execution import BacktestExecutionAssumptions
+from quant_signal.backtesting.regimes import REGIME_DEFINITION_VERSION
 from quant_signal.backtesting.service import BacktestService
 from quant_signal.core.config import Settings
 from quant_signal.explainability.service import ExplainabilityService
@@ -129,15 +134,7 @@ def test_backtesting_and_explainability(tmp_path: Path) -> None:
     assert baseline_backtest_run.artifact_path != cost_backtest_run.artifact_path
     assert "cumulative_return" in baseline_backtest_run.summary_json
     assert shap_run.summary_json["global_importance"]
-    assert list(cost_artifact.columns) == [
-        "date",
-        "gross_return",
-        "transaction_cost",
-        "slippage_cost",
-        "net_return",
-        "active_sleeves",
-        "portfolio_return",
-    ]
+    assert list(cost_artifact.columns) == BACKTEST_ARTIFACT_COLUMNS
     assert np.allclose(
         baseline_artifact["gross_return"],
         baseline_artifact["net_return"],
@@ -145,6 +142,22 @@ def test_backtesting_and_explainability(tmp_path: Path) -> None:
     assert np.allclose(
         baseline_artifact["net_return"],
         baseline_artifact["portfolio_return"],
+    )
+    assert np.allclose(
+        cost_artifact["active_return"],
+        cost_artifact["portfolio_return"] - cost_artifact["benchmark_return"],
+    )
+    assert np.allclose(
+        cost_artifact["gross_active_return"],
+        cost_artifact["gross_return"] - cost_artifact["benchmark_return"],
+    )
+    assert np.allclose(
+        cost_artifact["portfolio_cumulative_return"],
+        (1.0 + cost_artifact["portfolio_return"]).cumprod() - 1.0,
+    )
+    assert np.allclose(
+        cost_artifact["benchmark_cumulative_return"],
+        (1.0 + cost_artifact["benchmark_return"]).cumprod() - 1.0,
     )
     assert (cost_artifact["transaction_cost"] > 0).any()
     assert (cost_artifact["slippage_cost"] > 0).any()
@@ -160,6 +173,28 @@ def test_backtesting_and_explainability(tmp_path: Path) -> None:
     assert cost_backtest_run.summary_json["total_transaction_cost"] > 0
     assert cost_backtest_run.summary_json["total_slippage_cost"] > 0
     assert cost_backtest_run.summary_json["total_cost_drag"] > 0
+    assert "benchmark_metrics" in cost_backtest_run.summary_json
+    assert "active_metrics" in cost_backtest_run.summary_json
+    assert "dimension_summaries" in cost_backtest_run.summary_json
+    assert cost_backtest_run.summary_json["benchmark_metrics"]["benchmark_symbol"] == "SPY"
+    assert cost_backtest_run.summary_json["active_metrics"]["tracking_error"] >= 0
+    assert {
+        "trend_flag",
+        "volatility_flag",
+        "momentum_flag",
+        "drawdown_bucket",
+    }.issubset(cost_backtest_run.summary_json["dimension_summaries"])
+    regime_metrics = next(iter(cost_backtest_run.regime_summary_json.values()))
+    assert {
+        "sample_count",
+        "average_return",
+        "average_gross_return",
+        "benchmark_average_return",
+        "average_active_return",
+        "average_gross_active_return",
+        "hit_rate",
+        "active_hit_rate",
+    }.issubset(regime_metrics)
     assert cost_backtest_run.metadata_json["execution_assumptions"] == {
         "transaction_cost_bps": 5.0,
         "slippage_bps": 2.0,
@@ -169,3 +204,12 @@ def test_backtesting_and_explainability(tmp_path: Path) -> None:
     }
     assert cost_backtest_run.metadata_json["sleeves_opened"] > 0
     assert cost_backtest_run.metadata_json["sleeves_closed"] > 0
+    assert cost_backtest_run.metadata_json["benchmark_symbol"] == "SPY"
+    assert (
+        cost_backtest_run.metadata_json["backtest_analytics_version"]
+        == BACKTEST_ANALYTICS_VERSION
+    )
+    assert (
+        cost_backtest_run.metadata_json["regime_definition_version"]
+        == REGIME_DEFINITION_VERSION
+    )
