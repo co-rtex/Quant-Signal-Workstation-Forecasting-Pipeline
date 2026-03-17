@@ -18,7 +18,7 @@ from quant_signal.ingestion.models import MarketDataBar, ProviderFetchResult
 from quant_signal.ingestion.providers import MarketDataProvider
 from quant_signal.ingestion.service import IngestionService
 from quant_signal.storage.db import create_all_tables, session_scope
-from quant_signal.storage.models import IngestionRun
+from quant_signal.storage.models import DatasetVersion, IngestionRun
 
 
 class StaticProvider(MarketDataProvider):
@@ -102,6 +102,20 @@ def build_synthetic_bars() -> list[MarketDataBar]:
         )
 
     return bars
+
+
+def ingest_synthetic_history(settings: Settings) -> None:
+    """Persist deterministic bars for CLI tests that need upstream market history."""
+
+    IngestionService(
+        provider=StaticProvider(build_synthetic_bars()),
+        settings=settings,
+        sleep_fn=lambda _: None,
+    ).ingest_daily_bars(
+        ["AAPL"],
+        date(2024, 1, 2),
+        date(2024, 5, 31),
+    )
 
 
 def test_pipeline_ingest_command_persists_run_and_emits_json_summary(tmp_path: Path) -> None:
@@ -261,3 +275,106 @@ def test_pipeline_ingest_command_returns_nonzero_and_logs_failures(
         "error_type": "ValueError",
         "retriable": False,
     }
+
+
+def test_pipeline_build_dataset_command_persists_manifest_and_emits_json_summary(
+    tmp_path: Path,
+) -> None:
+    """The dataset command should print a machine-readable dataset summary."""
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'pipeline-dataset.sqlite3'}"
+    settings = Settings(
+        database_url=database_url,
+        artifact_root=tmp_path / "artifacts",
+        benchmark_symbol="SPY",
+        universe_symbols=["AAPL", "SPY"],
+        default_horizons=[1, 5, 20],
+    )
+    create_all_tables(database_url)
+    ingest_synthetic_history(settings)
+
+    stdout = StringIO()
+    exit_code = main(
+        [
+            "build-dataset",
+            "--as-of-date",
+            "2024-05-31",
+            "--symbols",
+            "AAPL",
+            "--feature-set-version",
+            "cli_test_v1",
+        ],
+        settings=settings,
+        stdout=stdout,
+    )
+
+    assert exit_code == 0
+
+    payload = json.loads(stdout.getvalue())
+    assert payload["command"] == "build-dataset"
+    assert payload["status"] == "completed"
+    assert payload["as_of_date"] == "2024-05-31"
+    assert payload["feature_set_version"] == "cli_test_v1"
+    assert payload["symbols"] == ["AAPL"]
+    assert payload["horizons"] == [1, 5, 20]
+    assert payload["benchmark_symbol"] == "SPY"
+    assert payload["row_count"] > 0
+    assert Path(payload["artifact_path"]).exists()
+
+    with session_scope(database_url) as session:
+        dataset = session.scalar(
+            select(DatasetVersion).where(DatasetVersion.id == payload["dataset_version_id"])
+        )
+
+    assert dataset is not None
+    assert dataset.feature_set_version == "cli_test_v1"
+    assert dataset.row_count == payload["row_count"]
+    assert dataset.artifact_path == payload["artifact_path"]
+    assert dataset.artifact_hash == payload["artifact_hash"]
+    assert dataset.symbols == payload["symbols"]
+    assert dataset.horizons == payload["horizons"]
+    assert dataset.metadata_json["date_range"] == payload["date_range"]
+
+
+def test_pipeline_build_dataset_command_returns_nonzero_when_no_bars_exist(
+    tmp_path: Path,
+) -> None:
+    """The dataset command should fail cleanly when no persisted bars are available."""
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'pipeline-dataset-empty.sqlite3'}"
+    settings = Settings(
+        database_url=database_url,
+        artifact_root=tmp_path / "artifacts",
+        benchmark_symbol="SPY",
+        universe_symbols=["AAPL", "SPY"],
+    )
+    create_all_tables(database_url)
+
+    stdout = StringIO()
+    stderr = StringIO()
+    exit_code = main(
+        [
+            "build-dataset",
+            "--as-of-date",
+            "2024-05-31",
+            "--symbols",
+            "AAPL",
+        ],
+        settings=settings,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 1
+    assert stdout.getvalue() == ""
+    assert json.loads(stderr.getvalue()) == {
+        "command": "build-dataset",
+        "error": "No persisted bars were found for the requested dataset build.",
+        "error_type": "ValueError",
+        "status": "failed",
+    }
+
+    with session_scope(database_url) as session:
+        dataset = session.scalar(select(DatasetVersion).order_by(DatasetVersion.created_at.desc()))
+
+    assert dataset is None

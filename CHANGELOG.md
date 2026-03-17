@@ -24,6 +24,7 @@
 - Provider failure classification and retry metadata contracts for ingestion runs
 - Deterministic retry handling for transient ingestion failures
 - Shared pipeline CLI foundation with a scheduler-friendly `ingest` command
+- Scheduler-friendly `build-dataset` pipeline command with machine-readable dataset manifest output
 - SHAP explainability workflow with persisted global and local explanation artifacts tied to model versions
 
 ### Validated
@@ -45,7 +46,8 @@
 - provider failure classification coverage for ingestion
 - deterministic retry execution coverage for ingestion
 - pipeline CLI integration coverage for command execution and failure handling
+- pipeline CLI dataset command coverage for success and empty-history failures
 
 ### Next
 
-- Dataset and training pipeline commands
+- Train pipeline command

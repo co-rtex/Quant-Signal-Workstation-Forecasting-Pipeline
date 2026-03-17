@@ -13,12 +13,14 @@ from typing import Any, TextIO
 
 from quant_signal.core.config import Settings
 from quant_signal.core.logging import configure_logging
+from quant_signal.features.pipeline import FeaturePipeline
 from quant_signal.ingestion.service import IngestionService
-from quant_signal.storage.models import IngestionRun
+from quant_signal.storage.models import DatasetVersion, IngestionRun
 
 logger = logging.getLogger(__name__)
 
 IngestionServiceFactory = Callable[[Settings], IngestionService]
+FeaturePipelineFactory = Callable[[Settings], FeaturePipeline]
 
 
 def _parse_date(value: str) -> date:
@@ -50,11 +52,18 @@ def _build_ingestion_service(settings: Settings) -> IngestionService:
     return IngestionService(settings=settings)
 
 
+def _build_feature_pipeline(settings: Settings) -> FeaturePipeline:
+    """Build the feature pipeline for CLI execution."""
+
+    return FeaturePipeline(settings=settings)
+
+
 @dataclass(frozen=True)
 class ServiceFactories:
     """Factory bundle used by command handlers."""
 
     ingestion: IngestionServiceFactory = _build_ingestion_service
+    features: FeaturePipelineFactory = _build_feature_pipeline
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -89,6 +98,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest_parser.set_defaults(handler=_handle_ingest)
 
+    build_dataset_parser = subparsers.add_parser(
+        "build-dataset",
+        help="Materialize and register a versioned feature dataset.",
+    )
+    build_dataset_parser.add_argument(
+        "--as-of-date",
+        required=True,
+        type=_parse_date,
+        help="Inclusive ISO dataset cutoff date, for example 2024-05-31.",
+    )
+    build_dataset_parser.add_argument(
+        "--symbols",
+        nargs="+",
+        help="Optional space-delimited tickers. Defaults to UNIVERSE_SYMBOLS when omitted.",
+    )
+    build_dataset_parser.add_argument(
+        "--feature-set-version",
+        help="Optional feature set version. Defaults to the service default when omitted.",
+    )
+    build_dataset_parser.set_defaults(handler=_handle_build_dataset)
+
     return parser
 
 
@@ -106,6 +136,28 @@ def _handle_ingest(
         args.end_date,
     )
     return _summarize_ingestion_run(run)
+
+
+def _handle_build_dataset(
+    args: argparse.Namespace,
+    settings: Settings,
+    service_factories: ServiceFactories,
+) -> dict[str, object]:
+    """Execute the dataset build command and return a machine-readable summary."""
+
+    requested_symbols = _normalize_symbols(args.symbols) if args.symbols else None
+    pipeline = service_factories.features(settings)
+
+    if args.feature_set_version is None:
+        dataset = pipeline.build_dataset(args.as_of_date, requested_symbols)
+    else:
+        dataset = pipeline.build_dataset(
+            args.as_of_date,
+            requested_symbols,
+            args.feature_set_version,
+        )
+
+    return _summarize_dataset_version(dataset)
 
 
 def _summarize_ingestion_run(run: IngestionRun) -> dict[str, object]:
@@ -127,6 +179,27 @@ def _summarize_ingestion_run(run: IngestionRun) -> dict[str, object]:
         "benchmark_symbol": request_metadata.get("benchmark_symbol"),
         "start_date": run.start_date.isoformat(),
         "end_date": run.end_date.isoformat(),
+    }
+
+
+def _summarize_dataset_version(dataset: DatasetVersion) -> dict[str, object]:
+    """Build a stable JSON summary for dataset command output."""
+
+    metadata = dataset.metadata_json
+    date_range = _metadata_section(metadata, "date_range")
+    return {
+        "command": "build-dataset",
+        "status": "completed",
+        "dataset_version_id": dataset.id,
+        "as_of_date": dataset.as_of_date.isoformat(),
+        "feature_set_version": dataset.feature_set_version,
+        "row_count": dataset.row_count,
+        "symbols": dataset.symbols,
+        "horizons": dataset.horizons,
+        "artifact_path": dataset.artifact_path,
+        "artifact_hash": dataset.artifact_hash,
+        "benchmark_symbol": metadata.get("benchmark_symbol"),
+        "date_range": date_range,
     }
 
 

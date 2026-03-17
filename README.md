@@ -68,6 +68,12 @@ Production-minded forecasting platform for daily US equities. The system ingests
    quant-signal-pipeline ingest --start-date 2024-01-02 --end-date 2024-05-31 --symbols AAPL
    ```
 
+7. Build a versioned dataset artifact:
+
+   ```bash
+   quant-signal-pipeline build-dataset --as-of-date 2024-05-31 --symbols AAPL
+   ```
+
 ## Validation Workflow
 
 - `make lint`
@@ -78,9 +84,11 @@ Production-minded forecasting platform for daily US equities. The system ingests
 ## Pipeline CLI
 
 - `quant-signal-pipeline ingest` is now available as the first thin orchestration command for scheduler-friendly market data ingestion
-- The command delegates directly to `IngestionService`, prints a JSON summary on success, emits a compact JSON error payload on failure, and relies on the hardened provider retry behavior already owned by the ingestion layer
+- `quant-signal-pipeline build-dataset` now maps directly to `FeaturePipeline` and prints a machine-readable dataset manifest summary with the persisted dataset version ID and artifact reference
+- The commands delegate directly to `IngestionService` and `FeaturePipeline`, print JSON summaries on success, emit compact JSON error payloads on failure, and keep retry or dataset logic inside the service layer
 - `--symbols` is optional; when omitted, the command uses `UNIVERSE_SYMBOLS` from settings
-- Remaining pipeline subcommands for dataset, training, backtest, explainability, and signal publication are intentionally staged as follow-on slices
+- `--feature-set-version` is optional for `build-dataset`; when omitted, the CLI defers to the service default
+- Remaining pipeline subcommands for training, backtest, explainability, and signal publication are intentionally staged as follow-on slices
 
 ## Current Status
 
