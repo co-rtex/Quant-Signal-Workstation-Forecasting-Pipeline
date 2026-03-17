@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Sequence
 from datetime import date, datetime
 
 from quant_signal.core.config import Settings, get_settings
-from quant_signal.ingestion.errors import ProviderError, normalize_provider_error
 from quant_signal.ingestion.models import ProviderFetchResult
 from quant_signal.ingestion.providers import (
     MarketDataProvider,
     build_market_data_provider,
+)
+from quant_signal.ingestion.retry import (
+    SleepFn,
+    build_retry_metadata,
+    execute_provider_fetch_with_retry,
 )
 from quant_signal.storage.db import session_scope
 from quant_signal.storage.models import IngestionRun
@@ -24,46 +29,6 @@ def build_provider_config_snapshot(settings: Settings) -> dict[str, object]:
         "max_attempts": int(settings.market_data_max_attempts),
         "backoff_seconds": float(settings.market_data_backoff_seconds),
         "backoff_multiplier": float(settings.market_data_backoff_multiplier),
-    }
-
-
-def build_retry_attempt_entry(
-    attempt_number: int,
-    status: str,
-    provider_error: ProviderError | None = None,
-    *,
-    scheduled_backoff_seconds: float | None = None,
-) -> dict[str, object]:
-    """Build a JSON-safe retry attempt entry."""
-
-    entry: dict[str, object] = {
-        "attempt_number": attempt_number,
-        "status": status,
-    }
-    if provider_error is not None:
-        entry["retriable"] = provider_error.retriable
-        entry["error_type"] = provider_error.cause_type
-        entry["error_message"] = str(provider_error)
-    if scheduled_backoff_seconds is not None:
-        entry["scheduled_backoff_seconds"] = float(scheduled_backoff_seconds)
-    return entry
-
-
-def build_retry_metadata(
-    settings: Settings,
-    attempt_log: Sequence[dict[str, object]],
-    *,
-    completed_after_retry: bool,
-) -> dict[str, object]:
-    """Build the persisted retry metadata contract for an ingestion run."""
-
-    return {
-        "configured_max_attempts": int(settings.market_data_max_attempts),
-        "backoff_seconds": float(settings.market_data_backoff_seconds),
-        "backoff_multiplier": float(settings.market_data_backoff_multiplier),
-        "attempt_count": len(attempt_log),
-        "completed_after_retry": completed_after_retry,
-        "attempt_log": list(attempt_log),
     }
 
 
@@ -137,10 +102,12 @@ class IngestionService:
         provider: MarketDataProvider | None = None,
         settings: Settings | None = None,
         database_url: str | None = None,
+        sleep_fn: SleepFn | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.database_url = database_url or self.settings.database_url
         self.provider = provider or build_market_data_provider(self.settings)
+        self.sleep_fn = sleep_fn if sleep_fn is not None else time.sleep
 
     def ingest_daily_bars(
         self,
@@ -184,24 +151,59 @@ class IngestionService:
             )
             run_id = run.id
 
-        try:
-            fetch_result = self.provider.fetch_daily_bars(fetch_symbols, start_date, end_date)
-            bars = fetch_result.bars
-            records = [
-                DailyBarRecord(
-                    symbol=bar.symbol.upper(),
-                    trade_date=bar.trade_date,
-                    open=bar.open,
-                    high=bar.high,
-                    low=bar.low,
-                    close=bar.close,
-                    adjusted_close=bar.adjusted_close,
-                    volume=bar.volume,
-                    source=self.provider.name,
-                )
-                for bar in bars
-            ]
+        retry_result = execute_provider_fetch_with_retry(
+            lambda: self.provider.fetch_daily_bars(fetch_symbols, start_date, end_date),
+            provider_name=self.provider.name,
+            settings=self.settings,
+            sleep_fn=self.sleep_fn,
+        )
+        retry_metadata = build_retry_metadata(
+            self.settings,
+            retry_result.attempt_log,
+            completed_after_retry=retry_result.completed_after_retry,
+        )
 
+        if retry_result.terminal_error is not None:
+            with session_scope(self.database_url) as session:
+                repository = StorageRepository(session)
+                repository.finalize_ingestion_run(
+                    run_id=run_id,
+                    status="failed",
+                    records_written=0,
+                    metadata_json={
+                        "provider": provider_metadata,
+                        "retry": retry_metadata,
+                        "persistence": {"records_written": 0},
+                        "failure": {
+                            "error": str(retry_result.terminal_error),
+                            "error_type": retry_result.terminal_error.cause_type,
+                            "retriable": retry_result.terminal_error.retriable,
+                        },
+                    },
+                )
+            raise retry_result.terminal_error
+
+        fetch_result = retry_result.fetch_result
+        if fetch_result is None:
+            raise RuntimeError("Retry execution completed without a fetch result")
+
+        bars = fetch_result.bars
+        records = [
+            DailyBarRecord(
+                symbol=bar.symbol.upper(),
+                trade_date=bar.trade_date,
+                open=bar.open,
+                high=bar.high,
+                low=bar.low,
+                close=bar.close,
+                adjusted_close=bar.adjusted_close,
+                volume=bar.volume,
+                source=self.provider.name,
+            )
+            for bar in bars
+        ]
+
+        try:
             with session_scope(self.database_url) as session:
                 repository = StorageRepository(session)
                 repository.upsert_symbols(
@@ -218,11 +220,7 @@ class IngestionService:
                             **provider_metadata,
                             "metadata": fetch_result.provider_metadata,
                         },
-                        "retry": build_retry_metadata(
-                            self.settings,
-                            [build_retry_attempt_entry(1, "succeeded")],
-                            completed_after_retry=False,
-                        ),
+                        "retry": retry_metadata,
                         "provider_fetch": summarize_provider_fetch_result(
                             fetch_result,
                             fetch_symbols,
@@ -235,29 +233,25 @@ class IngestionService:
         except Exception as exc:
             with session_scope(self.database_url) as session:
                 repository = StorageRepository(session)
-                provider_error = normalize_provider_error(self.provider.name, exc)
                 repository.finalize_ingestion_run(
                     run_id=run_id,
                     status="failed",
                     records_written=0,
                     metadata_json={
-                        "provider": provider_metadata,
-                        "retry": build_retry_metadata(
-                            self.settings,
-                            [
-                                build_retry_attempt_entry(
-                                    1,
-                                    "failed",
-                                    provider_error,
-                                )
-                            ],
-                            completed_after_retry=False,
+                        "provider": {
+                            **provider_metadata,
+                            "metadata": fetch_result.provider_metadata,
+                        },
+                        "retry": retry_metadata,
+                        "provider_fetch": summarize_provider_fetch_result(
+                            fetch_result,
+                            fetch_symbols,
                         ),
                         "persistence": {"records_written": 0},
                         "failure": {
-                            "error": str(provider_error),
-                            "error_type": provider_error.cause_type,
-                            "retriable": provider_error.retriable,
+                            "error": str(exc),
+                            "error_type": exc.__class__.__name__,
+                            "retriable": False,
                         },
                     },
                 )

@@ -17,9 +17,11 @@ from quant_signal.ingestion.providers import (
     YFinanceMarketDataProvider,
     build_market_data_provider,
 )
-from quant_signal.ingestion.service import (
+from quant_signal.ingestion.retry import (
     build_retry_attempt_entry,
     build_retry_metadata,
+)
+from quant_signal.ingestion.service import (
     summarize_provider_fetch_result,
 )
 

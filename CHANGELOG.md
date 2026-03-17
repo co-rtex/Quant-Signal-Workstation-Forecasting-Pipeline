@@ -22,6 +22,7 @@
 - Regime-aware attribution summaries for primary regimes and grouped regime dimensions
 - Provider fetch envelopes, config-driven provider selection, and richer ingestion run metadata
 - Provider failure classification and retry metadata contracts for ingestion runs
+- Deterministic retry handling for transient ingestion failures
 - SHAP explainability workflow with persisted global and local explanation artifacts tied to model versions
 
 ### Validated
@@ -41,8 +42,8 @@
 - regime-aware attribution summary coverage for backtests
 - provider metadata/configuration coverage for ingestion
 - provider failure classification coverage for ingestion
+- deterministic retry execution coverage for ingestion
 
 ### Next
 
-- Deterministic retry handling for market data ingestion
 - Scheduled pipeline entrypoints

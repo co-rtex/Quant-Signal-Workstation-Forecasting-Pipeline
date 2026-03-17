@@ -83,6 +83,42 @@ class PermanentFailingProvider(MarketDataProvider):
         )
 
 
+class FlakyTransientProvider(MarketDataProvider):
+    """Provider that fails transiently before eventually succeeding."""
+
+    name = "flaky-transient"
+
+    def __init__(self, bars: Sequence[MarketDataBar], fail_attempts: int) -> None:
+        self._bars = list(bars)
+        self._fail_attempts = fail_attempts
+        self.attempt_count = 0
+
+    def fetch_daily_bars(
+        self,
+        symbols: Sequence[str],
+        start_date: date,
+        end_date: date,
+    ) -> ProviderFetchResult:
+        self.attempt_count += 1
+        if self.attempt_count <= self._fail_attempts:
+            raise ProviderTransientError(
+                self.name,
+                "temporary upstream unavailable",
+                cause_type="TimeoutError",
+            )
+
+        requested = {symbol.upper() for symbol in symbols}
+        filtered_bars = [
+            bar
+            for bar in self._bars
+            if bar.symbol.upper() in requested and start_date <= bar.trade_date <= end_date
+        ]
+        return ProviderFetchResult.from_bars(
+            filtered_bars,
+            provider_metadata={"fixture": "synthetic"},
+        )
+
+
 def build_synthetic_bars() -> list[MarketDataBar]:
     """Build a deterministic synthetic market history."""
 
@@ -269,6 +305,137 @@ def test_ingestion_persists_retry_metadata_for_transient_failures(tmp_path: Path
     assert "provider_fetch" not in run.metadata_json
 
 
+def test_ingestion_retries_transient_failures_then_succeeds(tmp_path: Path) -> None:
+    """Transient provider failures should retry with deterministic backoff and succeed."""
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'flaky-success.sqlite3'}"
+    settings = Settings(
+        database_url=database_url,
+        artifact_root=tmp_path / "artifacts",
+        benchmark_symbol="SPY",
+        universe_symbols=["AAPL", "SPY"],
+        default_horizons=[1, 5, 20],
+        market_data_max_attempts=3,
+        market_data_backoff_seconds=0.5,
+        market_data_backoff_multiplier=3.0,
+    )
+    create_all_tables(database_url)
+
+    sleep_calls: list[float] = []
+    provider = FlakyTransientProvider(build_synthetic_bars(), fail_attempts=1)
+    run = IngestionService(
+        provider=provider,
+        settings=settings,
+        sleep_fn=sleep_calls.append,
+    ).ingest_daily_bars(
+        ["AAPL"],
+        date(2024, 1, 2),
+        date(2024, 5, 31),
+    )
+
+    assert provider.attempt_count == 2
+    assert sleep_calls == [0.5]
+    assert run.status == "completed"
+    assert run.records_written == 180
+    assert run.metadata_json["retry"] == {
+        "configured_max_attempts": 3,
+        "backoff_seconds": 0.5,
+        "backoff_multiplier": 3.0,
+        "attempt_count": 2,
+        "completed_after_retry": True,
+        "attempt_log": [
+            {
+                "attempt_number": 1,
+                "status": "failed",
+                "retriable": True,
+                "error_type": "TimeoutError",
+                "error_message": "temporary upstream unavailable",
+                "scheduled_backoff_seconds": 0.5,
+            },
+            {
+                "attempt_number": 2,
+                "status": "succeeded",
+            },
+        ],
+    }
+    assert run.metadata_json["provider_fetch"]["returned_symbols"] == ["AAPL", "SPY"]
+    assert "failure" not in run.metadata_json
+
+
+def test_ingestion_exhausts_transient_retries(tmp_path: Path) -> None:
+    """Transient failures should retry up to the configured limit and then fail."""
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'flaky-failure.sqlite3'}"
+    settings = Settings(
+        database_url=database_url,
+        artifact_root=tmp_path / "artifacts",
+        benchmark_symbol="SPY",
+        universe_symbols=["AAPL", "SPY"],
+        default_horizons=[1, 5, 20],
+        market_data_max_attempts=3,
+        market_data_backoff_seconds=0.5,
+        market_data_backoff_multiplier=2.0,
+    )
+    create_all_tables(database_url)
+
+    sleep_calls: list[float] = []
+    provider = FlakyTransientProvider(build_synthetic_bars(), fail_attempts=3)
+    service = IngestionService(
+        provider=provider,
+        settings=settings,
+        sleep_fn=sleep_calls.append,
+    )
+
+    with pytest.raises(ProviderTransientError, match="temporary upstream unavailable"):
+        service.ingest_daily_bars(["AAPL"], date(2024, 1, 2), date(2024, 5, 31))
+
+    with session_scope(database_url) as session:
+        run = session.execute(select(IngestionRun)).scalar_one()
+
+    assert provider.attempt_count == 3
+    assert sleep_calls == [0.5, 1.0]
+    assert run.status == "failed"
+    assert run.records_written == 0
+    assert run.metadata_json["retry"] == {
+        "configured_max_attempts": 3,
+        "backoff_seconds": 0.5,
+        "backoff_multiplier": 2.0,
+        "attempt_count": 3,
+        "completed_after_retry": False,
+        "attempt_log": [
+            {
+                "attempt_number": 1,
+                "status": "failed",
+                "retriable": True,
+                "error_type": "TimeoutError",
+                "error_message": "temporary upstream unavailable",
+                "scheduled_backoff_seconds": 0.5,
+            },
+            {
+                "attempt_number": 2,
+                "status": "failed",
+                "retriable": True,
+                "error_type": "TimeoutError",
+                "error_message": "temporary upstream unavailable",
+                "scheduled_backoff_seconds": 1.0,
+            },
+            {
+                "attempt_number": 3,
+                "status": "failed",
+                "retriable": True,
+                "error_type": "TimeoutError",
+                "error_message": "temporary upstream unavailable",
+            },
+        ],
+    }
+    assert run.metadata_json["failure"] == {
+        "error": "temporary upstream unavailable",
+        "error_type": "TimeoutError",
+        "retriable": True,
+    }
+    assert "provider_fetch" not in run.metadata_json
+
+
 def test_ingestion_persists_retry_metadata_for_permanent_failures(tmp_path: Path) -> None:
     """Terminal provider failures should be marked non-retryable."""
 
@@ -279,10 +446,18 @@ def test_ingestion_persists_retry_metadata_for_permanent_failures(tmp_path: Path
         benchmark_symbol="SPY",
         universe_symbols=["AAPL", "SPY"],
         default_horizons=[1, 5, 20],
+        market_data_max_attempts=3,
+        market_data_backoff_seconds=0.5,
+        market_data_backoff_multiplier=2.0,
     )
     create_all_tables(database_url)
 
-    service = IngestionService(provider=PermanentFailingProvider(), settings=settings)
+    sleep_calls: list[float] = []
+    service = IngestionService(
+        provider=PermanentFailingProvider(),
+        settings=settings,
+        sleep_fn=sleep_calls.append,
+    )
 
     with pytest.raises(ProviderPermanentError, match="invalid provider response payload"):
         service.ingest_daily_bars(["AAPL"], date(2024, 1, 2), date(2024, 5, 31))
@@ -292,15 +467,23 @@ def test_ingestion_persists_retry_metadata_for_permanent_failures(tmp_path: Path
 
     assert run.status == "failed"
     assert run.records_written == 0
-    assert run.metadata_json["retry"]["attempt_log"] == [
-        {
-            "attempt_number": 1,
-            "status": "failed",
-            "retriable": False,
-            "error_type": "ValueError",
-            "error_message": "invalid provider response payload",
-        }
-    ]
+    assert sleep_calls == []
+    assert run.metadata_json["retry"] == {
+        "configured_max_attempts": 3,
+        "backoff_seconds": 0.5,
+        "backoff_multiplier": 2.0,
+        "attempt_count": 1,
+        "completed_after_retry": False,
+        "attempt_log": [
+            {
+                "attempt_number": 1,
+                "status": "failed",
+                "retriable": False,
+                "error_type": "ValueError",
+                "error_message": "invalid provider response payload",
+            }
+        ],
+    }
     assert run.metadata_json["failure"] == {
         "error": "invalid provider response payload",
         "error_type": "ValueError",

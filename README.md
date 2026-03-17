@@ -89,8 +89,8 @@ The repository now includes the validated platform foundation, database schema, 
 - `MARKET_DATA_BACKOFF_SECONDS` defaults to `1.0`
 - `MARKET_DATA_BACKOFF_MULTIPLIER` defaults to `2.0`
 - Ingestion runs now persist nested request, provider, provider-fetch, and persistence metadata so partial or empty fetches are auditable without schema changes
-- Ingestion failures are now classified as transient or permanent at the provider edge, and runs persist a top-level `retry` block with attempt history
-- Deterministic backoff execution is still intentionally deferred to the next ingestion-hardening slice
+- Ingestion failures are classified as transient or permanent at the provider edge, and transient fetch failures now retry deterministically before the run is finalized
+- Runs persist a top-level `retry` block with attempt history, completed-after-retry state, and scheduled backoff values for retryable failed attempts
 
 ## Backtest Cost Assumptions
 
