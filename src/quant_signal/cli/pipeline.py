@@ -15,12 +15,14 @@ from quant_signal.core.config import Settings
 from quant_signal.core.logging import configure_logging
 from quant_signal.features.pipeline import FeaturePipeline
 from quant_signal.ingestion.service import IngestionService
-from quant_signal.storage.models import DatasetVersion, IngestionRun
+from quant_signal.storage.models import DatasetVersion, IngestionRun, ModelVersion
+from quant_signal.training.service import TrainingService
 
 logger = logging.getLogger(__name__)
 
 IngestionServiceFactory = Callable[[Settings], IngestionService]
 FeaturePipelineFactory = Callable[[Settings], FeaturePipeline]
+TrainingServiceFactory = Callable[[Settings], TrainingService]
 
 
 def _parse_date(value: str) -> date:
@@ -58,12 +60,19 @@ def _build_feature_pipeline(settings: Settings) -> FeaturePipeline:
     return FeaturePipeline(settings=settings)
 
 
+def _build_training_service(settings: Settings) -> TrainingService:
+    """Build the training service for CLI execution."""
+
+    return TrainingService(settings=settings)
+
+
 @dataclass(frozen=True)
 class ServiceFactories:
     """Factory bundle used by command handlers."""
 
     ingestion: IngestionServiceFactory = _build_ingestion_service
     features: FeaturePipelineFactory = _build_feature_pipeline
+    training: TrainingServiceFactory = _build_training_service
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -119,6 +128,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     build_dataset_parser.set_defaults(handler=_handle_build_dataset)
 
+    train_parser = subparsers.add_parser(
+        "train",
+        help="Train and register calibrated model candidates for a dataset artifact.",
+    )
+    train_parser.add_argument(
+        "--dataset-version-id",
+        required=True,
+        help="Persisted dataset version identifier to train from.",
+    )
+    train_parser.add_argument(
+        "--horizon",
+        action="append",
+        type=int,
+        help="Optional forecast horizon in days. Repeat to train multiple horizons.",
+    )
+    train_parser.set_defaults(handler=_handle_train)
+
     return parser
 
 
@@ -158,6 +184,21 @@ def _handle_build_dataset(
         )
 
     return _summarize_dataset_version(dataset)
+
+
+def _handle_train(
+    args: argparse.Namespace,
+    settings: Settings,
+    service_factories: ServiceFactories,
+) -> dict[str, object]:
+    """Execute the training command and return a machine-readable summary."""
+
+    requested_horizons = _normalize_horizons(args.horizon)
+    trained_models = service_factories.training(settings).train(
+        args.dataset_version_id,
+        requested_horizons,
+    )
+    return _summarize_trained_models(args.dataset_version_id, trained_models)
 
 
 def _summarize_ingestion_run(run: IngestionRun) -> dict[str, object]:
@@ -203,6 +244,53 @@ def _summarize_dataset_version(dataset: DatasetVersion) -> dict[str, object]:
     }
 
 
+def _summarize_trained_models(
+    dataset_version_id: str,
+    model_versions: Sequence[ModelVersion],
+) -> dict[str, object]:
+    """Build a stable JSON summary for training command output."""
+
+    sorted_models = sorted(
+        model_versions,
+        key=lambda model: (
+            model.horizon_days,
+            model.champion_rank if model.champion_rank is not None else 999_999,
+            model.model_family,
+        ),
+    )
+    model_entries = [_model_version_summary(model) for model in sorted_models]
+    trained_horizons = list(dict.fromkeys(model["horizon_days"] for model in model_entries))
+    champion_models = [
+        model_entry
+        for model_entry in model_entries
+        if model_entry["champion_rank"] == 1
+    ]
+    return {
+        "command": "train",
+        "status": "completed",
+        "dataset_version_id": dataset_version_id,
+        "horizons": trained_horizons,
+        "model_count": len(model_entries),
+        "champion_models": champion_models,
+        "models": model_entries,
+    }
+
+
+def _model_version_summary(model: ModelVersion) -> dict[str, object]:
+    """Return a machine-readable summary for a persisted model version."""
+
+    return {
+        "model_version_id": model.id,
+        "horizon_days": model.horizon_days,
+        "model_family": model.model_family,
+        "target_column": model.target_column,
+        "champion_rank": model.champion_rank,
+        "status": model.status,
+        "artifact_path": model.artifact_path,
+        "artifact_hash": model.artifact_hash,
+    }
+
+
 def _metadata_section(metadata: dict[str, object], key: str) -> dict[str, Any]:
     """Return a nested metadata section when present and dictionary-shaped."""
 
@@ -210,6 +298,21 @@ def _metadata_section(metadata: dict[str, object], key: str) -> dict[str, Any]:
     if isinstance(section, dict):
         return section
     return {}
+
+
+def _normalize_horizons(horizons: Sequence[int] | None) -> list[int] | None:
+    """Normalize repeated horizon arguments while preserving input order."""
+
+    if not horizons:
+        return None
+    normalized: list[int] = []
+    seen: set[int] = set()
+    for horizon in horizons:
+        if horizon in seen:
+            continue
+        normalized.append(horizon)
+        seen.add(horizon)
+    return normalized
 
 
 def main(

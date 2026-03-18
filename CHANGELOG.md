@@ -25,6 +25,7 @@
 - Deterministic retry handling for transient ingestion failures
 - Shared pipeline CLI foundation with a scheduler-friendly `ingest` command
 - Scheduler-friendly `build-dataset` pipeline command with machine-readable dataset manifest output
+- Scheduler-friendly `train` pipeline command with machine-readable model summaries and champion model IDs
 - SHAP explainability workflow with persisted global and local explanation artifacts tied to model versions
 
 ### Validated
@@ -47,7 +48,8 @@
 - deterministic retry execution coverage for ingestion
 - pipeline CLI integration coverage for command execution and failure handling
 - pipeline CLI dataset command coverage for success and empty-history failures
+- pipeline CLI training command coverage for success and unknown-dataset failures
 
 ### Next
 
-- Train pipeline command
+- Backtest and explain pipeline commands

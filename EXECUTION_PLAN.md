@@ -22,7 +22,7 @@ Extend the validated MVP with production-minded realism improvements, starting w
 | 12. Regime-aware attribution analytics | Complete | Regime-sliced implementation diagnostics and grouped attribution summaries |
 | 13. Provider metadata and configuration | Complete | Provider fetch envelope, factory-based selection, and richer ingestion run metadata |
 | 14. Retry-aware ingestion hardening | Complete | Failure classification, deterministic backoff, and attempt-level metadata |
-| 15. Scheduled pipeline entrypoints | In Progress | Shared CLI foundation plus `ingest` and `build-dataset` commands complete; remaining subcommands pending |
+| 15. Scheduled pipeline entrypoints | In Progress | Shared CLI foundation plus `ingest`, `build-dataset`, and `train` commands complete; remaining subcommands pending |
 
 ## Sequencing Rules
 
@@ -33,11 +33,11 @@ Extend the validated MVP with production-minded realism improvements, starting w
 
 ## Current Task
 
-Add the `train` pipeline command.
+Add backtest and explain pipeline commands.
 
 ## Next Task
 
-Add backtest and explain pipeline commands.
+Add a signal publishing pipeline command after a public refresh interface exists.
 
 ## Key Risks
 

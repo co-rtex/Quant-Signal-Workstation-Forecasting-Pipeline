@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Sequence
 from datetime import date
 from io import StringIO
@@ -13,12 +14,13 @@ from sqlalchemy import select
 
 from quant_signal.cli.pipeline import ServiceFactories, main
 from quant_signal.core.config import Settings
+from quant_signal.features.pipeline import FeaturePipeline
 from quant_signal.ingestion.errors import ProviderPermanentError
 from quant_signal.ingestion.models import MarketDataBar, ProviderFetchResult
 from quant_signal.ingestion.providers import MarketDataProvider
 from quant_signal.ingestion.service import IngestionService
 from quant_signal.storage.db import create_all_tables, session_scope
-from quant_signal.storage.models import DatasetVersion, IngestionRun
+from quant_signal.storage.models import DatasetVersion, IngestionRun, ModelVersion, SignalSnapshot
 
 
 class StaticProvider(MarketDataProvider):
@@ -104,6 +106,45 @@ def build_synthetic_bars() -> list[MarketDataBar]:
     return bars
 
 
+def build_training_bars(periods: int = 220) -> list[MarketDataBar]:
+    """Build a longer deterministic history with enough variation for training."""
+
+    bars: list[MarketDataBar] = []
+    dates = pd.bdate_range("2023-01-03", periods=periods)
+
+    for index, timestamp in enumerate(dates):
+        trade_date = timestamp.date()
+        aapl_close = 95.0 + (index * 0.18) + (math.sin(index / 5.0) * 7.5)
+        spy_close = 390.0 + (index * 0.1) + (math.sin(index / 8.0) * 4.0)
+
+        bars.append(
+            MarketDataBar(
+                symbol="AAPL",
+                trade_date=trade_date,
+                open=aapl_close - 0.5,
+                high=aapl_close + 0.9,
+                low=aapl_close - 1.1,
+                close=aapl_close,
+                adjusted_close=aapl_close,
+                volume=1_500_000 + (index * 500),
+            )
+        )
+        bars.append(
+            MarketDataBar(
+                symbol="SPY",
+                trade_date=trade_date,
+                open=spy_close - 0.6,
+                high=spy_close + 0.8,
+                low=spy_close - 1.0,
+                close=spy_close,
+                adjusted_close=spy_close,
+                volume=6_000_000 + (index * 1_000),
+            )
+        )
+
+    return bars
+
+
 def ingest_synthetic_history(settings: Settings) -> None:
     """Persist deterministic bars for CLI tests that need upstream market history."""
 
@@ -115,6 +156,20 @@ def ingest_synthetic_history(settings: Settings) -> None:
         ["AAPL"],
         date(2024, 1, 2),
         date(2024, 5, 31),
+    )
+
+
+def ingest_training_history(settings: Settings) -> None:
+    """Persist longer deterministic bars for training-oriented CLI tests."""
+
+    IngestionService(
+        provider=StaticProvider(build_training_bars()),
+        settings=settings,
+        sleep_fn=lambda _: None,
+    ).ingest_daily_bars(
+        ["AAPL"],
+        date(2023, 1, 3),
+        date(2023, 11, 30),
     )
 
 
@@ -378,3 +433,118 @@ def test_pipeline_build_dataset_command_returns_nonzero_when_no_bars_exist(
         dataset = session.scalar(select(DatasetVersion).order_by(DatasetVersion.created_at.desc()))
 
     assert dataset is None
+
+
+def test_pipeline_train_command_persists_models_and_emits_json_summary(tmp_path: Path) -> None:
+    """The train command should print a machine-readable model summary."""
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'pipeline-train.sqlite3'}"
+    settings = Settings(
+        database_url=database_url,
+        artifact_root=tmp_path / "artifacts",
+        benchmark_symbol="SPY",
+        universe_symbols=["AAPL", "SPY"],
+        default_horizons=[1, 5, 20],
+        min_training_days=80,
+    )
+    create_all_tables(database_url)
+    ingest_training_history(settings)
+    dataset = FeaturePipeline(settings=settings).build_dataset(date(2023, 11, 30), ["AAPL"])
+
+    stdout = StringIO()
+    exit_code = main(
+        [
+            "train",
+            "--dataset-version-id",
+            dataset.id,
+            "--horizon",
+            "5",
+            "--horizon",
+            "5",
+            "--horizon",
+            "1",
+        ],
+        settings=settings,
+        stdout=stdout,
+    )
+
+    assert exit_code == 0
+
+    payload = json.loads(stdout.getvalue())
+    assert payload["command"] == "train"
+    assert payload["status"] == "completed"
+    assert payload["dataset_version_id"] == dataset.id
+    assert payload["horizons"] == [1, 5]
+    assert payload["model_count"] == 4
+    assert len(payload["champion_models"]) == 2
+    assert payload["champion_models"][0]["horizon_days"] == 1
+    assert payload["champion_models"][1]["horizon_days"] == 5
+    assert all(model["model_version_id"] for model in payload["models"])
+    assert all(Path(model["artifact_path"]).exists() for model in payload["models"])
+
+    with session_scope(database_url) as session:
+        models = list(
+            session.execute(
+                select(ModelVersion)
+                .where(ModelVersion.dataset_version_id == dataset.id)
+                .order_by(
+                    ModelVersion.horizon_days,
+                    ModelVersion.champion_rank,
+                    ModelVersion.model_family,
+                )
+            ).scalars()
+        )
+        champion_snapshots = list(
+            session.execute(
+                select(SignalSnapshot)
+                .where(SignalSnapshot.model_version_id.in_([model.id for model in models]))
+            ).scalars()
+        )
+
+    assert len(models) == payload["model_count"]
+    assert {model.id for model in models} == {
+        model_payload["model_version_id"] for model_payload in payload["models"]
+    }
+    assert champion_snapshots
+    assert {
+        snapshot.model_version_id for snapshot in champion_snapshots
+    } == {
+        model_payload["model_version_id"] for model_payload in payload["champion_models"]
+    }
+
+
+def test_pipeline_train_command_returns_nonzero_for_unknown_dataset_id(
+    tmp_path: Path,
+) -> None:
+    """The train command should fail cleanly for an unknown dataset version."""
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'pipeline-train-failed.sqlite3'}"
+    settings = Settings(
+        database_url=database_url,
+        artifact_root=tmp_path / "artifacts",
+        benchmark_symbol="SPY",
+        universe_symbols=["AAPL", "SPY"],
+    )
+    create_all_tables(database_url)
+
+    stdout = StringIO()
+    stderr = StringIO()
+    exit_code = main(
+        [
+            "train",
+            "--dataset-version-id",
+            "missing-dataset-id",
+        ],
+        settings=settings,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 1
+    assert stdout.getvalue() == ""
+    assert json.loads(stderr.getvalue()) == {
+        "command": "train",
+        "error": "Unknown dataset version: missing-dataset-id",
+        "error_type": "ValueError",
+        "status": "failed",
+    }

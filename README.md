@@ -74,6 +74,12 @@ Production-minded forecasting platform for daily US equities. The system ingests
    quant-signal-pipeline build-dataset --as-of-date 2024-05-31 --symbols AAPL
    ```
 
+8. Train model candidates from an explicit dataset version:
+
+   ```bash
+   quant-signal-pipeline train --dataset-version-id <dataset-version-id> --horizon 1 --horizon 5
+   ```
+
 ## Validation Workflow
 
 - `make lint`
@@ -85,10 +91,12 @@ Production-minded forecasting platform for daily US equities. The system ingests
 
 - `quant-signal-pipeline ingest` is now available as the first thin orchestration command for scheduler-friendly market data ingestion
 - `quant-signal-pipeline build-dataset` now maps directly to `FeaturePipeline` and prints a machine-readable dataset manifest summary with the persisted dataset version ID and artifact reference
-- The commands delegate directly to `IngestionService` and `FeaturePipeline`, print JSON summaries on success, emit compact JSON error payloads on failure, and keep retry or dataset logic inside the service layer
+- `quant-signal-pipeline train` now maps directly to `TrainingService` and prints machine-readable model metadata for each persisted trained candidate plus the champion model IDs for the requested horizons
+- The commands delegate directly to `IngestionService`, `FeaturePipeline`, and `TrainingService`, print JSON summaries on success, emit compact JSON error payloads on failure, and keep retry, dataset, and training logic inside the service layer
 - `--symbols` is optional; when omitted, the command uses `UNIVERSE_SYMBOLS` from settings
 - `--feature-set-version` is optional for `build-dataset`; when omitted, the CLI defers to the service default
-- Remaining pipeline subcommands for training, backtest, explainability, and signal publication are intentionally staged as follow-on slices
+- `train` requires an explicit dataset version ID; it does not infer the latest dataset or chain dataset builds automatically
+- Remaining pipeline subcommands for backtest, explainability, and signal publication are intentionally staged as follow-on slices
 
 ## Current Status
 
