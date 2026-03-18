@@ -45,6 +45,21 @@ class CandidateTrainingResult:
     artifact_hash: str
 
 
+@dataclass(frozen=True)
+class SignalSnapshotRefreshResult:
+    """Summary of one explicit signal snapshot refresh operation."""
+
+    model_version_id: str
+    dataset_version_id: str
+    horizon_days: int
+    model_family: str
+    champion_rank: int | None
+    snapshots_written: int
+    signal_dates: int
+    first_as_of_date: date | None
+    latest_as_of_date: date | None
+
+
 class TrainingService:
     """Train calibrated model families and persist registry outputs."""
 
@@ -153,16 +168,40 @@ class TrainingService:
                     )
 
                     if champion_rank == 1:
-                        snapshots = self._build_signal_snapshots(
-                            model_version_id=model_version.id,
+                        self._replace_signal_snapshots(
+                            repository=repository,
+                            model_version=model_version,
                             bundle=result.bundle,
                             dataset_frame=dataset_frame,
                         )
-                        repository.replace_signal_snapshots(model_version.id, snapshots)
 
                     persisted_models.append(model_version)
 
         return persisted_models
+
+    def refresh_signal_snapshots(
+        self,
+        model_version_id: str,
+    ) -> SignalSnapshotRefreshResult:
+        """Refresh persisted ranked signal snapshots for one explicit model version."""
+
+        with session_scope(self.database_url) as session:
+            repository = StorageRepository(session)
+            model_version = repository.get_model_version(model_version_id)
+            dataset_version = repository.get_dataset_version(model_version.dataset_version_id)
+
+        bundle = joblib.load(model_version.artifact_path)
+        dataset_frame = pd.read_parquet(dataset_version.artifact_path)
+        dataset_frame["date"] = pd.to_datetime(dataset_frame["date"])
+
+        with session_scope(self.database_url) as session:
+            repository = StorageRepository(session)
+            return self._replace_signal_snapshots(
+                repository=repository,
+                model_version=model_version,
+                bundle=bundle,
+                dataset_frame=dataset_frame,
+            )
 
     def _train_candidates(
         self,
@@ -325,6 +364,40 @@ class TrainingService:
             )
             for row in ranked.itertuples(index=False)
         ]
+
+    def _replace_signal_snapshots(
+        self,
+        repository: StorageRepository,
+        model_version: ModelVersion,
+        bundle: ModelArtifactBundle,
+        dataset_frame: pd.DataFrame,
+    ) -> SignalSnapshotRefreshResult:
+        """Replace one model version's persisted signal snapshots safely."""
+
+        snapshots = self._build_signal_snapshots(
+            model_version_id=model_version.id,
+            bundle=bundle,
+            dataset_frame=dataset_frame,
+        )
+        if not snapshots:
+            raise ValueError(
+                f"No signal snapshots were generated for model version {model_version.id}."
+            )
+
+        repository.replace_signal_snapshots(model_version.id, snapshots)
+        signal_dates = sorted({snapshot.as_of_date for snapshot in snapshots})
+
+        return SignalSnapshotRefreshResult(
+            model_version_id=model_version.id,
+            dataset_version_id=model_version.dataset_version_id,
+            horizon_days=model_version.horizon_days,
+            model_family=model_version.model_family,
+            champion_rank=model_version.champion_rank,
+            snapshots_written=len(snapshots),
+            signal_dates=len(signal_dates),
+            first_as_of_date=signal_dates[0] if signal_dates else None,
+            latest_as_of_date=signal_dates[-1] if signal_dates else None,
+        )
 
     def _candidate_estimators(self) -> dict[str, Pipeline]:
         """Return the baseline candidate model families."""
