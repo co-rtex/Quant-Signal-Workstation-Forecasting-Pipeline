@@ -25,7 +25,7 @@ from quant_signal.storage.models import (
     ModelVersion,
     ShapRun,
 )
-from quant_signal.training.service import TrainingService
+from quant_signal.training.service import SignalSnapshotRefreshResult, TrainingService
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +217,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     explain_parser.set_defaults(handler=_handle_explain)
 
+    publish_signals_parser = subparsers.add_parser(
+        "publish-signals",
+        help="Refresh persisted ranked signal snapshots for one registered model version.",
+    )
+    publish_signals_parser.add_argument(
+        "--model-version-id",
+        required=True,
+        help="Persisted model version identifier to publish signals for.",
+    )
+    publish_signals_parser.set_defaults(handler=_handle_publish_signals)
+
     return parser
 
 
@@ -310,6 +321,19 @@ def _handle_explain(
             top_signals=args.top_signals,
         )
     return _summarize_shap_run(shap_run)
+
+
+def _handle_publish_signals(
+    args: argparse.Namespace,
+    settings: Settings,
+    service_factories: ServiceFactories,
+) -> dict[str, object]:
+    """Execute the publish-signals command and return a machine-readable summary."""
+
+    refresh_result = service_factories.training(settings).refresh_signal_snapshots(
+        args.model_version_id
+    )
+    return _summarize_signal_snapshot_refresh(refresh_result)
 
 
 def _summarize_ingestion_run(run: IngestionRun) -> dict[str, object]:
@@ -443,6 +467,30 @@ def _summarize_shap_run(run: ShapRun) -> dict[str, object]:
         ),
         "local_explanations_count": (
             len(local_explanations) if isinstance(local_explanations, list) else 0
+        ),
+    }
+
+
+def _summarize_signal_snapshot_refresh(
+    result: SignalSnapshotRefreshResult,
+) -> dict[str, object]:
+    """Build a stable JSON summary for publish-signals command output."""
+
+    return {
+        "command": "publish-signals",
+        "status": "completed",
+        "model_version_id": result.model_version_id,
+        "dataset_version_id": result.dataset_version_id,
+        "horizon_days": result.horizon_days,
+        "model_family": result.model_family,
+        "champion_rank": result.champion_rank,
+        "snapshots_written": result.snapshots_written,
+        "signal_dates": result.signal_dates,
+        "first_as_of_date": (
+            result.first_as_of_date.isoformat() if result.first_as_of_date is not None else None
+        ),
+        "latest_as_of_date": (
+            result.latest_as_of_date.isoformat() if result.latest_as_of_date is not None else None
         ),
     }
 

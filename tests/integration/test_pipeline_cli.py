@@ -771,3 +771,175 @@ def test_pipeline_explain_command_returns_nonzero_for_unknown_model_id(
         "error_type": "ValueError",
         "status": "failed",
     }
+
+
+def test_pipeline_publish_signals_command_refreshes_snapshots_and_emits_json_summary(
+    tmp_path: Path,
+) -> None:
+    """The publish-signals command should refresh one model's persisted snapshots."""
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'pipeline-publish.sqlite3'}"
+    settings = Settings(
+        database_url=database_url,
+        artifact_root=tmp_path / "artifacts",
+        benchmark_symbol="SPY",
+        universe_symbols=["AAPL", "SPY"],
+        default_horizons=[1, 5, 20],
+        min_training_days=80,
+    )
+    create_all_tables(database_url)
+    ingest_training_history(settings)
+    dataset = FeaturePipeline(settings=settings).build_dataset(date(2023, 11, 30), ["AAPL"])
+    trained_models = TrainingService(settings=settings).train(dataset.id, [5])
+    champion_model = next(model for model in trained_models if model.champion_rank == 1)
+
+    stdout = StringIO()
+    exit_code = main(
+        [
+            "publish-signals",
+            "--model-version-id",
+            champion_model.id,
+        ],
+        settings=settings,
+        stdout=stdout,
+    )
+
+    assert exit_code == 0
+
+    payload = json.loads(stdout.getvalue())
+    assert payload["command"] == "publish-signals"
+    assert payload["status"] == "completed"
+    assert payload["model_version_id"] == champion_model.id
+    assert payload["dataset_version_id"] == dataset.id
+    assert payload["horizon_days"] == champion_model.horizon_days
+    assert payload["model_family"] == champion_model.model_family
+    assert payload["champion_rank"] == champion_model.champion_rank
+    assert payload["snapshots_written"] > 0
+    assert payload["signal_dates"] > 0
+    assert payload["first_as_of_date"] is not None
+    assert payload["latest_as_of_date"] is not None
+
+    with session_scope(database_url) as session:
+        snapshots = list(
+            session.execute(
+                select(SignalSnapshot)
+                .where(SignalSnapshot.model_version_id == champion_model.id)
+                .order_by(SignalSnapshot.as_of_date, SignalSnapshot.rank)
+            ).scalars()
+        )
+
+    assert len(snapshots) == payload["snapshots_written"]
+    assert len({snapshot.as_of_date for snapshot in snapshots}) == payload["signal_dates"]
+    assert snapshots[0].as_of_date.isoformat() == payload["first_as_of_date"]
+    assert snapshots[-1].as_of_date.isoformat() == payload["latest_as_of_date"]
+
+
+def test_pipeline_publish_signals_command_is_idempotent_for_one_model_version(
+    tmp_path: Path,
+) -> None:
+    """Repeated publish runs should replace only one model's snapshots without duplicates."""
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'pipeline-publish-idempotent.sqlite3'}"
+    settings = Settings(
+        database_url=database_url,
+        artifact_root=tmp_path / "artifacts",
+        benchmark_symbol="SPY",
+        universe_symbols=["AAPL", "SPY"],
+        default_horizons=[1, 5, 20],
+        min_training_days=80,
+    )
+    create_all_tables(database_url)
+    ingest_training_history(settings)
+    dataset = FeaturePipeline(settings=settings).build_dataset(date(2023, 11, 30), ["AAPL"])
+    trained_models = TrainingService(settings=settings).train(dataset.id, [5])
+    champion_model = next(model for model in trained_models if model.champion_rank == 1)
+
+    first_stdout = StringIO()
+    second_stdout = StringIO()
+
+    first_exit_code = main(
+        [
+            "publish-signals",
+            "--model-version-id",
+            champion_model.id,
+        ],
+        settings=settings,
+        stdout=first_stdout,
+    )
+    second_exit_code = main(
+        [
+            "publish-signals",
+            "--model-version-id",
+            champion_model.id,
+        ],
+        settings=settings,
+        stdout=second_stdout,
+    )
+
+    assert first_exit_code == 0
+    assert second_exit_code == 0
+
+    first_payload = json.loads(first_stdout.getvalue())
+    second_payload = json.loads(second_stdout.getvalue())
+
+    with session_scope(database_url) as session:
+        snapshots = list(
+            session.execute(
+                select(SignalSnapshot)
+                .where(SignalSnapshot.model_version_id == champion_model.id)
+                .order_by(SignalSnapshot.as_of_date, SignalSnapshot.rank)
+            ).scalars()
+        )
+
+    snapshot_rows = [
+        (
+            snapshot.as_of_date.isoformat(),
+            snapshot.symbol,
+            snapshot.rank,
+            snapshot.score,
+            json.dumps(snapshot.metadata_json, sort_keys=True),
+        )
+        for snapshot in snapshots
+    ]
+
+    assert first_payload["snapshots_written"] == second_payload["snapshots_written"]
+    assert first_payload["signal_dates"] == second_payload["signal_dates"]
+    assert len(snapshots) == second_payload["snapshots_written"]
+    assert len(snapshot_rows) == len(set(snapshot_rows))
+
+
+def test_pipeline_publish_signals_command_returns_nonzero_for_unknown_model_id(
+    tmp_path: Path,
+) -> None:
+    """The publish-signals command should fail cleanly for an unknown model version."""
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'pipeline-publish-failed.sqlite3'}"
+    settings = Settings(
+        database_url=database_url,
+        artifact_root=tmp_path / "artifacts",
+        benchmark_symbol="SPY",
+        universe_symbols=["AAPL", "SPY"],
+    )
+    create_all_tables(database_url)
+
+    stdout = StringIO()
+    stderr = StringIO()
+    exit_code = main(
+        [
+            "publish-signals",
+            "--model-version-id",
+            "missing-model-version",
+        ],
+        settings=settings,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 1
+    assert stdout.getvalue() == ""
+    assert json.loads(stderr.getvalue()) == {
+        "command": "publish-signals",
+        "error": "Unknown model version: missing-model-version",
+        "error_type": "ValueError",
+        "status": "failed",
+    }

@@ -22,7 +22,7 @@ Extend the validated MVP with production-minded realism improvements, starting w
 | 12. Regime-aware attribution analytics | Complete | Regime-sliced implementation diagnostics and grouped attribution summaries |
 | 13. Provider metadata and configuration | Complete | Provider fetch envelope, factory-based selection, and richer ingestion run metadata |
 | 14. Retry-aware ingestion hardening | Complete | Failure classification, deterministic backoff, and attempt-level metadata |
-| 15. Scheduled pipeline entrypoints | In Progress | Shared CLI foundation plus `ingest`, `build-dataset`, `train`, `backtest`, and `explain` commands complete; signal publication remains deferred |
+| 15. Scheduled pipeline entrypoints | Complete | Shared CLI foundation plus `ingest`, `build-dataset`, `train`, `backtest`, `explain`, and `publish-signals` commands complete |
 
 ## Sequencing Rules
 
@@ -33,11 +33,11 @@ Extend the validated MVP with production-minded realism improvements, starting w
 
 ## Current Task
 
-Add a signal publishing pipeline command after a public refresh interface exists.
+Operator UX and deployment readiness hardening.
 
 ## Next Task
 
-Keep signal publication deferred until a public refresh interface exists.
+Add thin Makefile wrappers and deployment/readiness artifacts around the completed CLI surface.
 
 ## Key Risks
 

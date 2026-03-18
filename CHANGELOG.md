@@ -28,6 +28,8 @@
 - Scheduler-friendly `train` pipeline command with machine-readable model summaries and champion model IDs
 - Scheduler-friendly `backtest` pipeline command with machine-readable run summaries, artifact references, and resolved execution assumptions
 - Scheduler-friendly `explain` pipeline command with machine-readable SHAP run summaries and artifact references
+- Public, idempotent signal snapshot refresh interface on `TrainingService`
+- Scheduler-friendly `publish-signals` pipeline command with machine-readable snapshot publication summaries
 - SHAP explainability workflow with persisted global and local explanation artifacts tied to model versions
 
 ### Validated
@@ -53,7 +55,8 @@
 - pipeline CLI training command coverage for success and unknown-dataset failures
 - pipeline CLI backtest command coverage for success and unknown-model failures
 - pipeline CLI explain command coverage for success and unknown-model failures
+- pipeline CLI publish-signals coverage for success, idempotent reruns, and unknown-model failures
 
 ### Next
 
-- Signal publication pipeline command after a public refresh interface exists
+- Operator UX, thin task-runner wrappers, and deployment/readiness hardening

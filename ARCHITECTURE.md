@@ -45,6 +45,7 @@
 - Deterministic retry execution is owned by the ingestion layer and limited to provider fetches; database writes and run finalization remain single-attempt.
 - `FeaturePipeline.build_dataset(as_of_date, symbols, feature_set_version)` owns feature and label materialization plus dataset manifest creation.
 - `TrainingService.train(dataset_version_id, horizons)` owns candidate fitting, probability calibration, evaluation persistence, champion selection, and signal snapshot refresh.
+- `TrainingService.refresh_signal_snapshots(model_version_id)` owns explicit, idempotent signal snapshot replacement for one persisted model version.
 - `BacktestService.run(model_version_id, top_n)` retrains the registered model family in a monthly walk-forward loop and persists summary artifacts.
 - `BacktestService.run(model_version_id, top_n, execution_assumptions)` supports reproducible cost-aware reruns without changing the database schema.
 - `label_regimes(benchmark_frame)` preserves the primary trend/volatility regime while adding benchmark momentum and drawdown context for grouped analytics.
@@ -54,7 +55,7 @@
 - `ExplainabilityService.generate(model_version_id, sample_size, top_signals)` binds SHAP outputs to a specific registered model artifact and evaluation window.
 - `SignalService.get_ranked_signals(as_of_date, horizon, limit)` is the read-side contract used by the API layer.
 - Ingestion run metadata stays schema-light and nested inside `metadata_json`: request parameters, provider configuration, attempt-level retry metadata, provider fetch diagnostics, and persistence counts are persisted without widening the database schema.
-- `quant-signal-pipeline ingest`, `quant-signal-pipeline build-dataset`, `quant-signal-pipeline train`, `quant-signal-pipeline backtest`, and `quant-signal-pipeline explain` map directly to `IngestionService.ingest_daily_bars(...)`, `FeaturePipeline.build_dataset(...)`, `TrainingService.train(...)`, `BacktestService.run(...)`, and `ExplainabilityService.generate(...)`, keeping scheduling concerns outside the domain service layer.
+- `quant-signal-pipeline ingest`, `quant-signal-pipeline build-dataset`, `quant-signal-pipeline train`, `quant-signal-pipeline backtest`, `quant-signal-pipeline explain`, and `quant-signal-pipeline publish-signals` map directly to `IngestionService.ingest_daily_bars(...)`, `FeaturePipeline.build_dataset(...)`, `TrainingService.train(...)`, `BacktestService.run(...)`, `ExplainabilityService.generate(...)`, and `TrainingService.refresh_signal_snapshots(...)`, keeping scheduling concerns outside the domain service layer.
 
 ## Initial Tradeoffs
 
