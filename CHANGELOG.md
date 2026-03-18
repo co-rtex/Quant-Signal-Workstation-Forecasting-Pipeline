@@ -26,6 +26,7 @@
 - Shared pipeline CLI foundation with a scheduler-friendly `ingest` command
 - Scheduler-friendly `build-dataset` pipeline command with machine-readable dataset manifest output
 - Scheduler-friendly `train` pipeline command with machine-readable model summaries and champion model IDs
+- Scheduler-friendly `backtest` pipeline command with machine-readable run summaries, artifact references, and resolved execution assumptions
 - SHAP explainability workflow with persisted global and local explanation artifacts tied to model versions
 
 ### Validated
@@ -49,7 +50,8 @@
 - pipeline CLI integration coverage for command execution and failure handling
 - pipeline CLI dataset command coverage for success and empty-history failures
 - pipeline CLI training command coverage for success and unknown-dataset failures
+- pipeline CLI backtest command coverage for success and unknown-model failures
 
 ### Next
 
-- Backtest and explain pipeline commands
+- Explain and signal publication pipeline commands

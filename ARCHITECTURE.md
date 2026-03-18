@@ -54,7 +54,7 @@
 - `ExplainabilityService.generate(model_version_id, sample_size, top_signals)` binds SHAP outputs to a specific registered model artifact and evaluation window.
 - `SignalService.get_ranked_signals(as_of_date, horizon, limit)` is the read-side contract used by the API layer.
 - Ingestion run metadata stays schema-light and nested inside `metadata_json`: request parameters, provider configuration, attempt-level retry metadata, provider fetch diagnostics, and persistence counts are persisted without widening the database schema.
-- `quant-signal-pipeline ingest`, `quant-signal-pipeline build-dataset`, and `quant-signal-pipeline train` map directly to `IngestionService.ingest_daily_bars(...)`, `FeaturePipeline.build_dataset(...)`, and `TrainingService.train(...)`, keeping scheduling concerns outside the domain service layer.
+- `quant-signal-pipeline ingest`, `quant-signal-pipeline build-dataset`, `quant-signal-pipeline train`, and `quant-signal-pipeline backtest` map directly to `IngestionService.ingest_daily_bars(...)`, `FeaturePipeline.build_dataset(...)`, `TrainingService.train(...)`, and `BacktestService.run(...)`, keeping scheduling concerns outside the domain service layer.
 
 ## Initial Tradeoffs
 

@@ -20,7 +20,14 @@ from quant_signal.ingestion.models import MarketDataBar, ProviderFetchResult
 from quant_signal.ingestion.providers import MarketDataProvider
 from quant_signal.ingestion.service import IngestionService
 from quant_signal.storage.db import create_all_tables, session_scope
-from quant_signal.storage.models import DatasetVersion, IngestionRun, ModelVersion, SignalSnapshot
+from quant_signal.storage.models import (
+    BacktestRun,
+    DatasetVersion,
+    IngestionRun,
+    ModelVersion,
+    SignalSnapshot,
+)
+from quant_signal.training.service import TrainingService
 
 
 class StaticProvider(MarketDataProvider):
@@ -545,6 +552,126 @@ def test_pipeline_train_command_returns_nonzero_for_unknown_dataset_id(
     assert json.loads(stderr.getvalue()) == {
         "command": "train",
         "error": "Unknown dataset version: missing-dataset-id",
+        "error_type": "ValueError",
+        "status": "failed",
+    }
+
+
+def test_pipeline_backtest_command_persists_run_and_emits_json_summary(
+    tmp_path: Path,
+) -> None:
+    """The backtest command should print a machine-readable run summary."""
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'pipeline-backtest.sqlite3'}"
+    settings = Settings(
+        database_url=database_url,
+        artifact_root=tmp_path / "artifacts",
+        benchmark_symbol="SPY",
+        universe_symbols=["AAPL", "SPY"],
+        default_horizons=[1, 5, 20],
+        min_training_days=80,
+        top_n_signals=1,
+    )
+    create_all_tables(database_url)
+    ingest_training_history(settings)
+    dataset = FeaturePipeline(settings=settings).build_dataset(date(2023, 11, 30), ["AAPL"])
+    trained_models = TrainingService(settings=settings).train(dataset.id, [5])
+    champion_model = next(model for model in trained_models if model.champion_rank == 1)
+
+    stdout = StringIO()
+    exit_code = main(
+        [
+            "backtest",
+            "--model-version-id",
+            champion_model.id,
+            "--top-n",
+            "1",
+            "--transaction-cost-bps",
+            "5",
+            "--slippage-bps",
+            "2",
+        ],
+        settings=settings,
+        stdout=stdout,
+    )
+
+    assert exit_code == 0
+
+    payload = json.loads(stdout.getvalue())
+    assert payload["command"] == "backtest"
+    assert payload["status"] == "completed"
+    assert payload["model_version_id"] == champion_model.id
+    assert payload["horizon_days"] == champion_model.horizon_days
+    assert payload["top_n"] == 1
+    assert payload["benchmark_symbol"] == "SPY"
+    assert payload["signal_count"] >= 0
+    assert payload["execution_assumptions"] == {
+        "slippage_bps": 2.0,
+        "slippage_rate": 0.0002,
+        "total_cost_rate_per_side": 0.0007,
+        "transaction_cost_bps": 5.0,
+        "transaction_cost_rate": 0.0005,
+    }
+    assert set(payload["summary"]) == {
+        "annualized_return",
+        "annualized_volatility",
+        "cumulative_return",
+        "gross_cumulative_return",
+        "hit_rate",
+        "max_drawdown",
+        "sharpe_ratio",
+    }
+    assert Path(payload["artifact_path"]).exists()
+    assert Path(payload["detail_artifact_path"]).exists()
+
+    with session_scope(database_url) as session:
+        backtest_run = session.scalar(
+            select(BacktestRun).where(BacktestRun.id == payload["backtest_run_id"])
+        )
+
+    assert backtest_run is not None
+    assert backtest_run.model_version_id == champion_model.id
+    assert backtest_run.top_n == payload["top_n"]
+    assert backtest_run.artifact_path == payload["artifact_path"]
+    assert backtest_run.artifact_hash == payload["artifact_hash"]
+    assert backtest_run.metadata_json["detail_artifact_path"] == payload["detail_artifact_path"]
+    assert backtest_run.metadata_json["detail_artifact_hash"] == payload["detail_artifact_hash"]
+    assert backtest_run.metadata_json["execution_assumptions"] == payload["execution_assumptions"]
+    assert backtest_run.summary_json["cumulative_return"] == payload["summary"]["cumulative_return"]
+
+
+def test_pipeline_backtest_command_returns_nonzero_for_unknown_model_id(
+    tmp_path: Path,
+) -> None:
+    """The backtest command should fail cleanly for an unknown model version."""
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'pipeline-backtest-failed.sqlite3'}"
+    settings = Settings(
+        database_url=database_url,
+        artifact_root=tmp_path / "artifacts",
+        benchmark_symbol="SPY",
+        universe_symbols=["AAPL", "SPY"],
+    )
+    create_all_tables(database_url)
+
+    stdout = StringIO()
+    stderr = StringIO()
+    exit_code = main(
+        [
+            "backtest",
+            "--model-version-id",
+            "missing-model-version",
+        ],
+        settings=settings,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 1
+    assert stdout.getvalue() == ""
+    assert json.loads(stderr.getvalue()) == {
+        "command": "backtest",
+        "error": "Unknown model version: missing-model-version",
         "error_type": "ValueError",
         "status": "failed",
     }
