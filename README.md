@@ -86,6 +86,12 @@ Production-minded forecasting platform for daily US equities. The system ingests
    quant-signal-pipeline backtest --model-version-id <model-version-id> --top-n 1 --transaction-cost-bps 5 --slippage-bps 2
    ```
 
+10. Generate SHAP explainability artifacts from an explicit model version:
+
+   ```bash
+   quant-signal-pipeline explain --model-version-id <model-version-id> --sample-size 8 --top-signals 3
+   ```
+
 ## Validation Workflow
 
 - `make lint`
@@ -99,12 +105,14 @@ Production-minded forecasting platform for daily US equities. The system ingests
 - `quant-signal-pipeline build-dataset` now maps directly to `FeaturePipeline` and prints a machine-readable dataset manifest summary with the persisted dataset version ID and artifact reference
 - `quant-signal-pipeline train` now maps directly to `TrainingService` and prints machine-readable model metadata for each persisted trained candidate plus the champion model IDs for the requested horizons
 - `quant-signal-pipeline backtest` now maps directly to `BacktestService` and prints a compact run summary with the persisted backtest run ID, artifact references, resolved execution assumptions, and key return statistics
-- The commands delegate directly to `IngestionService`, `FeaturePipeline`, `TrainingService`, and `BacktestService`, print JSON summaries on success, emit compact JSON error payloads on failure, and keep retry, dataset, training, and backtest logic inside the service layer
+- `quant-signal-pipeline explain` now maps directly to `ExplainabilityService` and prints a compact SHAP run summary with the persisted explainability run ID, artifact reference, realized sample size, and summary counts
+- The commands delegate directly to `IngestionService`, `FeaturePipeline`, `TrainingService`, `BacktestService`, and `ExplainabilityService`, print JSON summaries on success, emit compact JSON error payloads on failure, and keep retry, dataset, training, backtest, and SHAP logic inside the service layer
 - `--symbols` is optional; when omitted, the command uses `UNIVERSE_SYMBOLS` from settings
 - `--feature-set-version` is optional for `build-dataset`; when omitted, the CLI defers to the service default
 - `train` requires an explicit dataset version ID; it does not infer the latest dataset or chain dataset builds automatically
 - `backtest` requires an explicit model version ID; optional `--top-n`, `--transaction-cost-bps`, and `--slippage-bps` override only the persisted service inputs and do not trigger training automatically
-- Remaining pipeline subcommands for explainability and signal publication are intentionally staged as follow-on slices
+- `explain` requires an explicit model version ID; optional `--sample-size` and `--top-signals` map directly to the existing service inputs without exposing broader SHAP tuning
+- The remaining pipeline subcommand for signal publication is intentionally deferred until a public refresh interface exists
 
 ## Current Status
 

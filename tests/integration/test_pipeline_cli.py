@@ -25,6 +25,7 @@ from quant_signal.storage.models import (
     DatasetVersion,
     IngestionRun,
     ModelVersion,
+    ShapRun,
     SignalSnapshot,
 )
 from quant_signal.training.service import TrainingService
@@ -671,6 +672,101 @@ def test_pipeline_backtest_command_returns_nonzero_for_unknown_model_id(
     assert stdout.getvalue() == ""
     assert json.loads(stderr.getvalue()) == {
         "command": "backtest",
+        "error": "Unknown model version: missing-model-version",
+        "error_type": "ValueError",
+        "status": "failed",
+    }
+
+
+def test_pipeline_explain_command_persists_run_and_emits_json_summary(
+    tmp_path: Path,
+) -> None:
+    """The explain command should print a machine-readable SHAP summary."""
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'pipeline-explain.sqlite3'}"
+    settings = Settings(
+        database_url=database_url,
+        artifact_root=tmp_path / "artifacts",
+        benchmark_symbol="SPY",
+        universe_symbols=["AAPL", "SPY"],
+        default_horizons=[1, 5, 20],
+        min_training_days=80,
+    )
+    create_all_tables(database_url)
+    ingest_training_history(settings)
+    dataset = FeaturePipeline(settings=settings).build_dataset(date(2023, 11, 30), ["AAPL"])
+    trained_models = TrainingService(settings=settings).train(dataset.id, [5])
+    champion_model = next(model for model in trained_models if model.champion_rank == 1)
+
+    stdout = StringIO()
+    exit_code = main(
+        [
+            "explain",
+            "--model-version-id",
+            champion_model.id,
+            "--sample-size",
+            "8",
+            "--top-signals",
+            "3",
+        ],
+        settings=settings,
+        stdout=stdout,
+    )
+
+    assert exit_code == 0
+
+    payload = json.loads(stdout.getvalue())
+    assert payload["command"] == "explain"
+    assert payload["status"] == "completed"
+    assert payload["model_version_id"] == champion_model.id
+    assert payload["sample_size"] == 8
+    assert payload["global_importance_count"] > 0
+    assert payload["local_explanations_count"] > 0
+    assert Path(payload["artifact_path"]).exists()
+
+    with session_scope(database_url) as session:
+        shap_run = session.scalar(select(ShapRun).where(ShapRun.id == payload["shap_run_id"]))
+
+    assert shap_run is not None
+    assert shap_run.model_version_id == champion_model.id
+    assert shap_run.sample_size == payload["sample_size"]
+    assert shap_run.artifact_path == payload["artifact_path"]
+    assert shap_run.artifact_hash == payload["artifact_hash"]
+    assert len(shap_run.summary_json["global_importance"]) == payload["global_importance_count"]
+    assert len(shap_run.summary_json["local_explanations"]) == payload["local_explanations_count"]
+
+
+def test_pipeline_explain_command_returns_nonzero_for_unknown_model_id(
+    tmp_path: Path,
+) -> None:
+    """The explain command should fail cleanly for an unknown model version."""
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'pipeline-explain-failed.sqlite3'}"
+    settings = Settings(
+        database_url=database_url,
+        artifact_root=tmp_path / "artifacts",
+        benchmark_symbol="SPY",
+        universe_symbols=["AAPL", "SPY"],
+    )
+    create_all_tables(database_url)
+
+    stdout = StringIO()
+    stderr = StringIO()
+    exit_code = main(
+        [
+            "explain",
+            "--model-version-id",
+            "missing-model-version",
+        ],
+        settings=settings,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 1
+    assert stdout.getvalue() == ""
+    assert json.loads(stderr.getvalue()) == {
+        "command": "explain",
         "error": "Unknown model version: missing-model-version",
         "error_type": "ValueError",
         "status": "failed",

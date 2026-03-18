@@ -15,9 +15,16 @@ from quant_signal.backtesting.execution import BacktestExecutionAssumptions
 from quant_signal.backtesting.service import BacktestService
 from quant_signal.core.config import Settings
 from quant_signal.core.logging import configure_logging
+from quant_signal.explainability.service import ExplainabilityService
 from quant_signal.features.pipeline import FeaturePipeline
 from quant_signal.ingestion.service import IngestionService
-from quant_signal.storage.models import BacktestRun, DatasetVersion, IngestionRun, ModelVersion
+from quant_signal.storage.models import (
+    BacktestRun,
+    DatasetVersion,
+    IngestionRun,
+    ModelVersion,
+    ShapRun,
+)
 from quant_signal.training.service import TrainingService
 
 logger = logging.getLogger(__name__)
@@ -26,6 +33,7 @@ IngestionServiceFactory = Callable[[Settings], IngestionService]
 FeaturePipelineFactory = Callable[[Settings], FeaturePipeline]
 TrainingServiceFactory = Callable[[Settings], TrainingService]
 BacktestServiceFactory = Callable[[Settings], BacktestService]
+ExplainabilityServiceFactory = Callable[[Settings], ExplainabilityService]
 
 
 def _parse_date(value: str) -> date:
@@ -75,6 +83,12 @@ def _build_backtest_service(settings: Settings) -> BacktestService:
     return BacktestService(settings=settings)
 
 
+def _build_explainability_service(settings: Settings) -> ExplainabilityService:
+    """Build the explainability service for CLI execution."""
+
+    return ExplainabilityService(settings=settings)
+
+
 @dataclass(frozen=True)
 class ServiceFactories:
     """Factory bundle used by command handlers."""
@@ -83,6 +97,7 @@ class ServiceFactories:
     features: FeaturePipelineFactory = _build_feature_pipeline
     training: TrainingServiceFactory = _build_training_service
     backtesting: BacktestServiceFactory = _build_backtest_service
+    explainability: ExplainabilityServiceFactory = _build_explainability_service
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -181,6 +196,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     backtest_parser.set_defaults(handler=_handle_backtest)
 
+    explain_parser = subparsers.add_parser(
+        "explain",
+        help="Generate and persist SHAP explainability artifacts for a registered model version.",
+    )
+    explain_parser.add_argument(
+        "--model-version-id",
+        required=True,
+        help="Persisted model version identifier to explain.",
+    )
+    explain_parser.add_argument(
+        "--sample-size",
+        type=int,
+        help="Optional number of evaluation rows to sample. Defaults to the service default.",
+    )
+    explain_parser.add_argument(
+        "--top-signals",
+        type=int,
+        help="Optional number of local explanations to surface. Defaults to the service default.",
+    )
+    explain_parser.set_defaults(handler=_handle_explain)
+
     return parser
 
 
@@ -251,6 +287,29 @@ def _handle_backtest(
         execution_assumptions=execution_assumptions,
     )
     return _summarize_backtest_run(backtest_run)
+
+
+def _handle_explain(
+    args: argparse.Namespace,
+    settings: Settings,
+    service_factories: ServiceFactories,
+) -> dict[str, object]:
+    """Execute the explain command and return a machine-readable summary."""
+
+    service = service_factories.explainability(settings)
+    if args.sample_size is None and args.top_signals is None:
+        shap_run = service.generate(args.model_version_id)
+    elif args.sample_size is None:
+        shap_run = service.generate(args.model_version_id, top_signals=args.top_signals)
+    elif args.top_signals is None:
+        shap_run = service.generate(args.model_version_id, sample_size=args.sample_size)
+    else:
+        shap_run = service.generate(
+            args.model_version_id,
+            sample_size=args.sample_size,
+            top_signals=args.top_signals,
+        )
+    return _summarize_shap_run(shap_run)
 
 
 def _summarize_ingestion_run(run: IngestionRun) -> dict[str, object]:
@@ -363,6 +422,28 @@ def _summarize_backtest_run(run: BacktestRun) -> dict[str, object]:
         "signal_count": metadata.get("signal_count"),
         "execution_assumptions": _metadata_section(metadata, "execution_assumptions"),
         "summary": _backtest_summary(run.summary_json),
+    }
+
+
+def _summarize_shap_run(run: ShapRun) -> dict[str, object]:
+    """Build a stable JSON summary for explain command output."""
+
+    global_importance = run.summary_json.get("global_importance")
+    local_explanations = run.summary_json.get("local_explanations")
+    return {
+        "command": "explain",
+        "status": "completed",
+        "shap_run_id": run.id,
+        "model_version_id": run.model_version_id,
+        "sample_size": run.sample_size,
+        "artifact_path": run.artifact_path,
+        "artifact_hash": run.artifact_hash,
+        "global_importance_count": (
+            len(global_importance) if isinstance(global_importance, list) else 0
+        ),
+        "local_explanations_count": (
+            len(local_explanations) if isinstance(local_explanations, list) else 0
+        ),
     }
 
 
