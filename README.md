@@ -1,162 +1,189 @@
 # Quant Signal Workstation & Forecasting Pipeline
 
-Production-minded forecasting platform for daily US equities. The system ingests market data, builds reproducible feature datasets, trains calibrated multi-horizon models, runs regime-aware backtests, generates SHAP explainability artifacts, and serves ranked signals through FastAPI.
+[![CI](https://github.com/co-rtex/Quant-Signal-Workstation-Forecasting-Pipeline/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/co-rtex/Quant-Signal-Workstation-Forecasting-Pipeline/actions/workflows/ci.yml?query=branch%3Amain)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## MVP Scope
+**An end-to-end research platform for reproducible equity-signal generation: market-data ingestion, versioned feature datasets, calibrated multi-horizon models, walk-forward backtests, SHAP explanations, and read-only signal APIs.**
 
-- Daily US equities universe with multi-horizon binary targets for `1D`, `5D`, and `20D`
-- Replaceable market data provider contract with a free development adapter first
-- PostgreSQL-backed metadata registry and normalized market data storage
-- Versioned Parquet feature datasets under `artifacts/`
-- Calibrated probabilistic models, evaluation reporting, walk-forward backtests, and SHAP outputs
-- Read-only FastAPI endpoints for health, model metadata, and ranked signal snapshots
+> **Status:** the MVP workflow is implemented and tested locally and in integration tests. The next work is operator experience and deployment/readiness hardening. This is a research system, not investment advice or a live trading service.
+
+## Why It Exists
+
+A model notebook can produce a prediction without making the result reproducible or auditable. This project treats forecasting as a data and systems problem: every downstream run is tied to persisted market data, an explicit dataset version, a registered model version, and recorded execution assumptions.
+
+The goal is to make leakage controls, artifact lineage, costs, model selection, and explainability visible throughout the workflow.
+
+## Key Features
+
+- Replaceable market-data provider contract with classified transient/permanent failures
+- PostgreSQL registry for ingestion runs, normalized OHLCV bars, datasets, models, evaluations, backtests, explanations, and signal snapshots
+- Versioned Parquet feature datasets with artifact hashes and metadata
+- Leakage-aware temporal splits and multi-horizon labels for 1D, 5D, and 20D targets
+- Calibrated logistic-regression and histogram-gradient-boosting candidates
+- Champion selection using PR-AUC, Brier score, and ROC-AUC
+- Monthly walk-forward backtests with transaction costs, slippage, turnover, benchmark-relative analytics, and regime slices
+- Global and local SHAP artifacts tied to concrete model versions
+- Idempotent ranked-signal publication and read-only FastAPI endpoints
+- Scheduler-friendly CLI commands with machine-readable success and error output
+
+## Architecture
+
+```mermaid
+flowchart TD
+    Provider[Market-data provider] --> Ingestion[Ingestion service]
+    Ingestion --> DB[(PostgreSQL registry and OHLCV)]
+    DB --> Features[Feature pipeline]
+    Features --> Artifacts[Versioned Parquet datasets]
+    Artifacts --> Training[Training and calibration]
+    Training --> Models[Registered model artifacts]
+    Models --> Backtest[Walk-forward backtesting]
+    Models --> Explain[SHAP explainability]
+    Models --> Signals[Ranked signal snapshots]
+    Signals --> API[Read-only FastAPI]
+```
+
+PostgreSQL stores normalized data and metadata lineage; Parquet and serialized bundles store versioned data/model artifacts. The API reads persisted model metadata and signal snapshots rather than training inside request handlers.
+
+See [Architecture](ARCHITECTURE.md) for component boundaries, persistence choices, and tradeoffs.
+
+## Technical Highlights
+
+| Area | Implementation |
+| --- | --- |
+| Reproducibility | Explicit dataset/model IDs, artifact hashes, persisted assumptions, and versioned Parquet |
+| Data engineering | Normalized OHLCV ingestion, provider diagnostics, retry metadata, and Alembic migrations |
+| ML evaluation | Time-aware splits, probability calibration, multi-metric champion selection |
+| Backtesting | Monthly walk-forward retraining, overlapping horizon sleeves, costs, slippage, and turnover |
+| Explainability | Global and per-signal SHAP outputs tied to a registered model and evaluation window |
+| Serving | Read-only FastAPI endpoints backed by persisted snapshots |
+| Interfaces | Thin CLI commands over service-layer contracts with JSON output |
+| Quality | Strict mypy, Ruff, unit tests, PostgreSQL-backed integration tests, and CI |
+
+## Tech Stack
+
+- **Language:** Python 3.14
+- **API:** FastAPI and Pydantic
+- **Database:** PostgreSQL, SQLAlchemy, Alembic, and Psycopg
+- **Data:** pandas, NumPy, PyArrow/Parquet
+- **Modeling:** scikit-learn and SHAP
+- **Development provider:** yfinance behind a provider interface
+- **Tooling:** Hatchling, Ruff, mypy, pytest, Docker Compose, and GitHub Actions
+
+## Getting Started
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e '.[dev]'
+
+cp .env.example .env
+docker compose up -d postgres
+make migrate
+```
+
+Start the read-only API:
+
+```bash
+make run-api
+```
+
+## Example Pipeline
+
+Each stage requires an explicit upstream version instead of silently selecting the latest artifact.
+
+```bash
+# 1. Ingest daily market data
+quant-signal-pipeline ingest \
+  --start-date 2024-01-02 \
+  --end-date 2024-05-31 \
+  --symbols AAPL
+
+# 2. Materialize a versioned feature dataset
+quant-signal-pipeline build-dataset \
+  --as-of-date 2024-05-31 \
+  --symbols AAPL
+
+# 3. Train calibrated candidates from the returned dataset version
+quant-signal-pipeline train \
+  --dataset-version-id <dataset-version-id> \
+  --horizon 1 \
+  --horizon 5
+
+# 4. Backtest an explicit model version with recorded costs
+quant-signal-pipeline backtest \
+  --model-version-id <model-version-id> \
+  --top-n 1 \
+  --transaction-cost-bps 5 \
+  --slippage-bps 2
+
+# 5. Generate explanations and publish persisted signal snapshots
+quant-signal-pipeline explain \
+  --model-version-id <model-version-id> \
+  --sample-size 8 \
+  --top-signals 3
+
+quant-signal-pipeline publish-signals \
+  --model-version-id <model-version-id>
+```
+
+Successful commands print compact JSON summaries containing the persisted run IDs and artifact references. Failure paths emit machine-readable error payloads.
+
+## Testing
+
+```bash
+make lint
+make typecheck
+make test
+make validate
+```
+
+The test suite covers:
+
+- provider envelopes, failure classification, and deterministic retry behavior
+- temporal features, labels, splits, and dataset materialization
+- model training, calibration, persistence, and signal serving
+- cost-aware walk-forward backtesting, turnover, attribution, and regime summaries
+- SHAP artifact generation
+- CLI success, validation, and unknown-version failure paths
+- PostgreSQL migrations and API readiness behavior
+
+## Project Status
+
+| Implemented | Next |
+| --- | --- |
+| Ingestion provider abstraction and normalized OHLCV persistence | Operator-facing workflow improvements |
+| Versioned feature datasets and registry lineage | Thin task-runner/deployment wrappers |
+| Calibrated model training and champion selection | Deployment and readiness hardening |
+| Cost-aware walk-forward backtests | Production data-provider decision |
+| SHAP explainability artifacts | Broader model and strategy comparisons |
+| Persisted signal snapshots and read-only API | Production scheduling target |
+
+The running delivery record is in [CHANGELOG.md](CHANGELOG.md), and [EXECUTION_PLAN.md](EXECUTION_PLAN.md) tracks completed and next phases.
 
 ## Repository Layout
 
 ```text
 .
 ├── alembic/                  # Database migrations
-├── artifacts/                # Local artifact storage (gitignored)
 ├── src/quant_signal/         # Application package
-├── tests/                    # Unit and integration tests
+├── tests/                    # Unit and PostgreSQL-backed integration tests
 ├── ARCHITECTURE.md           # System design and tradeoffs
-├── CHANGELOG.md              # Running delivery log
-├── EXECUTION_PLAN.md         # Living execution plan
-├── Makefile                  # Local developer workflow
+├── CHANGELOG.md              # Delivery record
+├── EXECUTION_PLAN.md         # Phase status and remaining work
+├── Makefile                  # Local validation and run commands
 ├── docker-compose.yml        # Local PostgreSQL
-└── pyproject.toml            # Packaging, lint, type, and test config
+└── pyproject.toml            # Package, dependency, lint, type, and test config
 ```
 
-## Quick Start
+## Important Boundaries
 
-1. Create a virtual environment and install dependencies:
+- The default provider is appropriate for development, not a production market-data SLA.
+- Backtests are research artifacts and do not represent live performance.
+- Cost and slippage assumptions are explicit inputs and default to zero unless configured.
+- The API serves persisted results; it does not train models on request.
+- No investment or performance claim is made by this repository.
 
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   python -m pip install --upgrade pip
-   python -m pip install -e .[dev]
-   ```
+## License
 
-2. Copy environment defaults:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-3. Start PostgreSQL:
-
-   ```bash
-   docker compose up -d postgres
-   ```
-
-4. Run migrations:
-
-   ```bash
-   make migrate
-   ```
-
-5. Start the API:
-
-   ```bash
-   make run-api
-   ```
-
-6. Run a scheduled-friendly ingestion command:
-
-   ```bash
-   quant-signal-pipeline ingest --start-date 2024-01-02 --end-date 2024-05-31 --symbols AAPL
-   ```
-
-7. Build a versioned dataset artifact:
-
-   ```bash
-   quant-signal-pipeline build-dataset --as-of-date 2024-05-31 --symbols AAPL
-   ```
-
-8. Train model candidates from an explicit dataset version:
-
-   ```bash
-   quant-signal-pipeline train --dataset-version-id <dataset-version-id> --horizon 1 --horizon 5
-   ```
-
-9. Run a walk-forward backtest from an explicit model version:
-
-   ```bash
-   quant-signal-pipeline backtest --model-version-id <model-version-id> --top-n 1 --transaction-cost-bps 5 --slippage-bps 2
-   ```
-
-10. Generate SHAP explainability artifacts from an explicit model version:
-
-   ```bash
-   quant-signal-pipeline explain --model-version-id <model-version-id> --sample-size 8 --top-signals 3
-   ```
-
-11. Refresh persisted ranked signal snapshots for an explicit model version:
-
-   ```bash
-   quant-signal-pipeline publish-signals --model-version-id <model-version-id>
-   ```
-
-## Validation Workflow
-
-- `make lint`
-- `make typecheck`
-- `make test`
-- `make validate`
-
-## Pipeline CLI
-
-- `quant-signal-pipeline ingest` is now available as the first thin orchestration command for scheduler-friendly market data ingestion
-- `quant-signal-pipeline build-dataset` now maps directly to `FeaturePipeline` and prints a machine-readable dataset manifest summary with the persisted dataset version ID and artifact reference
-- `quant-signal-pipeline train` now maps directly to `TrainingService` and prints machine-readable model metadata for each persisted trained candidate plus the champion model IDs for the requested horizons
-- `quant-signal-pipeline backtest` now maps directly to `BacktestService` and prints a compact run summary with the persisted backtest run ID, artifact references, resolved execution assumptions, and key return statistics
-- `quant-signal-pipeline explain` now maps directly to `ExplainabilityService` and prints a compact SHAP run summary with the persisted explainability run ID, artifact reference, realized sample size, and summary counts
-- `quant-signal-pipeline publish-signals` now maps directly to `TrainingService.refresh_signal_snapshots(...)` and prints a compact publication summary with the explicit model version, snapshot counts, and published date range
-- The commands delegate directly to `IngestionService`, `FeaturePipeline`, `TrainingService`, `BacktestService`, and `ExplainabilityService`, print JSON summaries on success, emit compact JSON error payloads on failure, and keep retry, dataset, training, backtest, SHAP, and signal publication logic inside the service layer
-- `--symbols` is optional; when omitted, the command uses `UNIVERSE_SYMBOLS` from settings
-- `--feature-set-version` is optional for `build-dataset`; when omitted, the CLI defers to the service default
-- `train` requires an explicit dataset version ID; it does not infer the latest dataset or chain dataset builds automatically
-- `backtest` requires an explicit model version ID; optional `--top-n`, `--transaction-cost-bps`, and `--slippage-bps` override only the persisted service inputs and do not trigger training automatically
-- `explain` requires an explicit model version ID; optional `--sample-size` and `--top-signals` map directly to the existing service inputs without exposing broader SHAP tuning
-- `publish-signals` requires an explicit model version ID; it does not infer champions, latest models, or multi-model fanout, and repeated runs safely replace only that model version's snapshots
-
-## Current Status
-
-The repository now includes the validated platform foundation, database schema, ingestion contract, persisted OHLCV workflow, feature engineering pipeline, versioned dataset artifacts, calibrated model training, cost-aware walk-forward backtesting with benchmark-relative analytics and richer regime context, SHAP explainability artifacts, persisted signal snapshots, and read-only FastAPI endpoints for health, signals, and model metadata.
-
-## Implemented MVP Workflow
-
-1. Ingest benchmark and universe OHLCV data through a provider abstraction.
-2. Materialize reproducible feature datasets as versioned Parquet artifacts with registry metadata in PostgreSQL.
-3. Train baseline `logistic_regression` and `hist_gradient_boosting` candidates per horizon, calibrate probabilities, and rank the champion with `PR-AUC`, `Brier score`, and `ROC-AUC`.
-4. Persist ranked daily signal snapshots for champion models so the API stays read-only.
-5. Run monthly walk-forward backtests with benchmark-relative analytics, cost-aware net returns, richer benchmark regime context, turnover-aware reporting, attribution-ready summaries, and regime-aware attribution slices.
-6. Generate global and local SHAP summaries tied to a concrete model version and evaluation window.
-
-## Provider Configuration
-
-- `MARKET_DATA_PROVIDER` defaults to `yfinance`
-- `MARKET_DATA_MAX_ATTEMPTS` defaults to `1`
-- `MARKET_DATA_BACKOFF_SECONDS` defaults to `1.0`
-- `MARKET_DATA_BACKOFF_MULTIPLIER` defaults to `2.0`
-- Ingestion runs now persist nested request, provider, provider-fetch, and persistence metadata so partial or empty fetches are auditable without schema changes
-- Ingestion failures are classified as transient or permanent at the provider edge, and transient fetch failures now retry deterministically before the run is finalized
-- Runs persist a top-level `retry` block with attempt history, completed-after-retry state, and scheduled backoff values for retryable failed attempts
-
-## Backtest Cost Assumptions
-
-- `BACKTEST_TRANSACTION_COST_BPS` defaults to `0.0`
-- `BACKTEST_SLIPPAGE_BPS` defaults to `0.0`
-- Backtest artifacts now record daily `gross_return`, `transaction_cost`, `slippage_cost`, `net_return`, and `active_sleeves`
-- `portfolio_return` remains available as an alias of `net_return` for backward compatibility
-
-## Backtest Analytics
-
-- Daily backtest artifacts include benchmark-relative fields such as `benchmark_return`, `active_return`, `gross_active_return`, and relative cumulative performance
-- Benchmark regime context now includes the primary trend/volatility regime plus momentum and drawdown dimensions
-- Persisted summaries include benchmark metrics, active-return metrics, and grouped performance slices for `trend_flag`, `volatility_flag`, `momentum_flag`, and `drawdown_bucket`
-- Backtest runs also persist a companion detail artifact with composition-level rows for turnover and benchmark-relative contribution diagnostics
-- Daily backtest artifacts now include `entries_count`, `exits_count`, `holdings_count`, `turnover`, and `turnover_cost`
-- `summary_json` now includes top-level `attribution_metrics` and lifecycle-based `lifecycle_attribution` summaries keyed by `entry`, `held`, and `exit`
-- `regime_summary_json` now includes daily average transaction/slippage/implementation drag fields for the primary regime keys, and `summary_json["attribution_dimension_summaries"]` carries the same daily-grain attribution view for each regime dimension
+[MIT](LICENSE)
